@@ -15,3 +15,4 @@ name = "my_tcp"
 path = "src/lib.rs"
 
 [dependencies]
+clap = "~2.30.0"
