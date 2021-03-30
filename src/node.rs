@@ -1,6 +1,6 @@
 use clap::{App, Arg, ArgMatches};
-use std::env;
-use my_tcp::app;
+use std::{env, sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread};
+use my_tcp::{app, core::manager::{self, TaskMsg, TaskRet}, core::socket::Socket};
 
 fn main() {
     println!("Starting a Transport Node!");
@@ -62,6 +62,16 @@ fn main() {
         )
         .get_matches();
 
+    // start socket manger
+    let mut socket_manager = manager::SocketManager::new();
+    // the channel to send tasks of sockets
+    let (task_sender, task_receiver) = mpsc::channel::<manager::TaskMsg>();
+    // the channel to send the return value channel, channel of channel...
+    let (ret_channel_send, ret_channel_recv) = mpsc::channel::<mpsc::Receiver<manager::TaskRet>>();
+    thread::spawn(move || {
+        socket_manager.start(task_receiver, ret_channel_send);
+    });
+
     // get exec type
     let command: String = arg_matches
         .value_of("exec_type")
@@ -71,10 +81,10 @@ fn main() {
     
     match command.as_str() {
         "transfer" => {
-            exec_transfer(arg_matches);
+            exec_transfer(arg_matches, task_sender, ret_channel_recv);
         },
         "server" => {
-            exec_server(arg_matches);
+            exec_server(arg_matches, task_sender, ret_channel_recv);
         },
         _ => {println!("Undefined exec command!");}
     }
@@ -93,7 +103,7 @@ fn main() {
 // Optional arguments:
 //     interval: execution interval of the transfer client, default 1 second
 //     buf_size: buffer size of the transfer client, default 65536
-fn exec_transfer (args: ArgMatches) {
+fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
     let dest: String = args
         .value_of("dest_addr")
         .unwrap_or("127.0.0.1")
@@ -127,6 +137,18 @@ fn exec_transfer (args: ArgMatches) {
 
     println!("transfer args parsed.");
 
+    // TCPSock sock = this.tcpMan.socket();
+    // sock.bind(localPort);
+    // sock.connect(destAddr, port);
+    // TransferClient client = new
+    //     TransferClient(manager, this, sock, amount, interval, sz);
+    // client.start();
+
+    let task_sender = Arc::new(Mutex::new(task_sender));
+    let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
+
+    let sock = Socket::new(task_sender.clone(), ret_channel_recv.clone());
+    
 
 }
 
@@ -145,7 +167,7 @@ fn exec_transfer (args: ArgMatches) {
 //     servint: execution interval of the transfer server, default 1 second
 //     workint: execution interval of the transfer worker, default 1 second
 //     sz: buffer size of the transfer worker, default 65536
-fn exec_server (args: ArgMatches) {
+fn exec_server (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
     let local_port: String = args
         .value_of("dest_addr")
         .unwrap_or("127.0.0.1")

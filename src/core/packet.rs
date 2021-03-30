@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, convert::TryInto, slice::SliceIndex, u32, usize};
+use std::{collections::VecDeque, convert::TryInto, u32, usize};
 
 /// transport packet, following fishnet format
 
