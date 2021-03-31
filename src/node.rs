@@ -114,11 +114,11 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
         .unwrap_or("88")
         .parse()
         .expect("can not parse dest port");
-    let local_port: String = args
-        .value_of("dest_addr")
-        .unwrap_or("127.0.0.1")
+    let local_port: u8 = args
+        .value_of("local_port")
+        .unwrap_or("88")
         .parse()
-        .expect("can not parse dest addr");
+        .expect("can not parse local port");
     let byte_num: u32 = args
         .value_of("num_byte")
         .unwrap_or("1024")
@@ -144,11 +144,12 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
     //     TransferClient(manager, this, sock, amount, interval, sz);
     // client.start();
 
+    // share with multiple socks
     let task_sender = Arc::new(Mutex::new(task_sender));
     let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
 
     let sock = Socket::new(task_sender.clone(), ret_channel_recv.clone());
-    
+    sock.bind(local_port).expect("Can not bind local port!");
 
 }
 

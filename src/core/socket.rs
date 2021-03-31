@@ -1,4 +1,5 @@
-use std::net::Ipv4Addr;
+use core::panic;
+use std::{hash::Hash, net::Ipv4Addr};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::{Arc, Mutex};
 
@@ -15,6 +16,7 @@ pub enum SocketState {
     SHUTDOWN // close requested, FIN not sent (due to unsent data in queue)
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SocketID {
     pub src_addr: Ipv4Addr,
     pub dest_addr: Ipv4Addr,
@@ -23,18 +25,18 @@ pub struct SocketID {
 }
 
 impl SocketID {
-    pub fn new () -> Self {
+    pub fn new (local_port: u8) -> Self {
         SocketID{
             src_addr: Ipv4Addr::new(127, 0, 0, 1), dest_addr: Ipv4Addr::new(127, 0, 0, 1),
-            local_port: 0, remote_port: 0
+            local_port, remote_port: 0
         }
     }
 }
 
 pub struct Socket {
     pub id: SocketID, // the user only need to know the ID, actual work will be done by manager.
-    task_sender: Arc<Mutex<Sender<TaskMsg>>>,
-    ret_recv: Receiver<TaskRet>,
+    task_sender: Arc<Mutex<Sender<TaskMsg>>>, // common channel to send tasks to socket manager.
+    ret_recv: Receiver<TaskRet>, // individual channel to get return values.
 }
 
 /*
@@ -46,10 +48,17 @@ impl Socket {
 
     pub fn new (task_sender: Arc<Mutex<Sender<TaskMsg>>>, ret_channel_recv: Arc<Mutex<Receiver<Receiver<TaskRet>>>>) -> Self {
 
-        task_sender.lock().unwrap().send(TaskMsg::New);
+        task_sender.lock().unwrap().send(TaskMsg::New).unwrap();
         let ret_recv = ret_channel_recv.lock().unwrap().recv().unwrap();
 
-        Socket{id: SocketID::new(), task_sender, ret_recv}
+        if let TaskRet::New(Ok(sock_id)) = ret_recv.recv().unwrap() {
+            Socket{id: sock_id, task_sender, ret_recv}
+        }
+        // if we are running out of ports..
+        else {
+            panic!("No ports available.");
+        }
+
     }
 
     /**
@@ -60,7 +69,13 @@ impl Socket {
      */
     pub fn bind(&self, localPort: u8) -> Result<(), isize> {
 
-        return Err(-1);
+        self.task_sender.lock().unwrap().send(TaskMsg::Bind((self.id.clone(), localPort))).unwrap();
+
+        if let TaskRet::Bind(ret) = self.ret_recv.recv().unwrap() {
+            return ret;
+        } else {
+            panic!("Bind(): Can not get ret value!");
+        }
     }
 
     /**
