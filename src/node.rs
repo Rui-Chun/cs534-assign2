@@ -1,6 +1,7 @@
 use clap::{App, Arg, ArgMatches};
 use std::{env, sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread};
 use my_tcp::{app, core::manager::{self, TaskMsg, TaskRet}, core::socket::Socket};
+use my_tcp::core::udp_utils;
 
 fn main() {
     println!("Starting a Transport Node!");
@@ -68,14 +69,15 @@ fn main() {
         )
         .get_matches();
 
-    // start socket manger
+    // ===== start socket manager ====
     let mut socket_manager = manager::SocketManager::new();
     // the channel to send tasks of sockets
     let (task_sender, task_receiver) = mpsc::channel::<manager::TaskMsg>();
     // the channel to send the return value channel, channel of channel...
     let (ret_channel_send, ret_channel_recv) = mpsc::channel::<mpsc::Receiver<manager::TaskRet>>();
+    let task_sender_c = task_sender.clone();
     thread::spawn(move || {
-        socket_manager.start(task_receiver, ret_channel_send);
+        socket_manager.start(task_sender_c, task_receiver, ret_channel_send);
     });
 
     // get exec type
@@ -161,12 +163,11 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
     // client.start();
 
     // share with multiple socks
-    let task_sender = Arc::new(Mutex::new(task_sender));
-    let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
-
-    let mut sock = Socket::new(local_addr, task_sender.clone(), ret_channel_recv.clone());
+    let mut sock = Socket::new(local_addr, task_sender.clone(), &ret_channel_recv);
     sock.bind(local_port).expect("Can not bind local port!");
     sock.connect(dest_addr, dest_port).expect("Can not establish connection.");
+
+    loop {}
 
 }
 
@@ -213,11 +214,8 @@ fn exec_server (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv
     //    TransferServer(manager, this, sock, servint, workint, sz);
     // server.start();
 
-    // share with multiple socks
-    let task_sender = Arc::new(Mutex::new(task_sender));
-    let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
 
-    let mut sock = Socket::new(local_addr, task_sender.clone(), ret_channel_recv.clone());
+    let mut sock = Socket::new(local_addr, task_sender.clone(), &ret_channel_recv);
     sock.bind(local_port).expect("Can not bind local port!");
     sock.listen(backlog).expect("Can not listen to port!");
 

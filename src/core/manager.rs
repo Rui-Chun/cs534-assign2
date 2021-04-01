@@ -1,6 +1,8 @@
 use core::panic;
 use std::{collections::{HashMap, VecDeque}, sync::mpsc::{self, Receiver, SendError, Sender}, usize};
-use super::socket::{SocketID, SocketState, Socket};
+use super::{socket::{SocketID, SocketState, Socket}, udp_utils::PacketCmd};
+use super::packet::TransportPacket;
+use super::udp_utils;
 
 struct SocketContents {
     state: SocketState,
@@ -30,12 +32,13 @@ pub enum TaskMsg {
     // (enum also can hold args)
     // ==== for socket API
     New(String), // (local_addr)
-    Bind((SocketID, u8)), // (sock_id, local_port)
-    Listen((SocketID, u32)), // (sock_id, backlog)
+    Bind(SocketID, u8), // (sock_id, local_port)
+    Listen(SocketID, u32), // (sock_id, backlog)
     Accept(),
-    Connect((SocketID, String, u8)),
+    Connect(SocketID, String, u8),
     // ==== for UDP packet parsing
-    OnReceive(), // a new packet is received
+    // a new packet is received
+    OnReceive(TransportPacket), // 
     // ==== for retransmission timer
     TimeOut(), // timer send msg of time out
 }
@@ -77,8 +80,12 @@ impl SocketManager {
      * Start this TCP manager
      * the entry point of manager thread
      */
-    pub fn start(&mut self, task_queue: mpsc::Receiver<TaskMsg> , ret_channel_sender: mpsc::Sender<mpsc::Receiver<TaskRet>>) {
+    pub fn start(&mut self, task_sender: mpsc::Sender<TaskMsg>, task_queue: mpsc::Receiver<TaskMsg> , ret_channel_sender: mpsc::Sender<mpsc::Receiver<TaskRet>>) {
+        // ==== start udp loops ====
+        let (udp_send, udp_recv) = mpsc::channel::<PacketCmd>();
+        udp_utils::start_loops(udp_recv, task_sender.clone());
 
+        // handle tasks
         for task in task_queue {
             match task {
                 TaskMsg::New(local_addr) => {
@@ -98,7 +105,7 @@ impl SocketManager {
                     }
                 },
 
-                TaskMsg::Bind((mut id, port)) => {
+                TaskMsg::Bind(mut id, port) => {
                     if self.ports_alloc[port as usize] == false {
                         if let Some(content) = self.socket_map.remove(&id){
                             id.local_port = port;
@@ -123,7 +130,7 @@ impl SocketManager {
                     }
                 }
 
-                TaskMsg::Listen((id, backlog)) => {
+                TaskMsg::Listen(id, backlog) => {
                     let mut sock_content = self.socket_map.remove(&id).unwrap();
                     if sock_content.backlog_que.is_some() {
                         println!("Listen(): do not call listen twice!");
@@ -140,7 +147,7 @@ impl SocketManager {
                     self.socket_map.insert(id, sock_content);
                 }
 
-                TaskMsg::Connect((mut id, dest_addr, dest_port)) => {
+                TaskMsg::Connect(mut id, dest_addr, dest_port) => {
                     let mut sock_content = self.socket_map.remove(&id).unwrap();
 
                     // check current state.
@@ -153,11 +160,12 @@ impl SocketManager {
                         // ===== need code here ====
                         // self.udp_dispatch.send_SYN() // this should be non-blocking !!!, just push to the queue
                         // =======
+                        udp_send.send(PacketCmd::SYN(id.clone())).unwrap();
     
                         sock_content.state = SocketState::SYN_SENT;
                         sock_content.send_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
                         sock_content.ret_sender.send(TaskRet::Connect(Ok(id.clone()))).unwrap();
-                        self.socket_map.insert(id, sock_content).unwrap();
+                        self.socket_map.insert(id, sock_content);
 
                     }
                     else {

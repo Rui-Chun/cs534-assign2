@@ -35,7 +35,7 @@ impl SocketID {
 
 pub struct Socket {
     pub id: SocketID, // the user only need to know the ID, actual work will be done by manager.
-    task_sender: Arc<Mutex<Sender<TaskMsg>>>, // common channel to send tasks to socket manager.
+    task_sender: Sender<TaskMsg>, // common channel to send tasks to socket manager.
     ret_recv: Receiver<TaskRet>, // individual channel to get return values.
 }
 
@@ -46,10 +46,10 @@ pub struct Socket {
 */
 impl Socket {
 
-    pub fn new (local_addr: String ,task_sender: Arc<Mutex<Sender<TaskMsg>>>, ret_channel_recv: Arc<Mutex<Receiver<Receiver<TaskRet>>>>) -> Self {
+    pub fn new (local_addr: String ,task_sender: Sender<TaskMsg>, ret_channel_recv: &Receiver<Receiver<TaskRet>>) -> Self {
 
-        task_sender.lock().unwrap().send(TaskMsg::New(local_addr)).unwrap();
-        let ret_recv = ret_channel_recv.lock().unwrap().recv().unwrap();
+        task_sender.send(TaskMsg::New(local_addr)).unwrap();
+        let ret_recv = ret_channel_recv.recv().unwrap();
 
         if let TaskRet::New(Ok(sock_id)) = ret_recv.recv().unwrap() {
             Socket{id: sock_id, task_sender, ret_recv}
@@ -69,7 +69,7 @@ impl Socket {
      */
     pub fn bind(&mut self, local_port: u8) -> Result<(), isize> {
 
-        self.task_sender.lock().unwrap().send(TaskMsg::Bind((self.id.clone(), local_port))).unwrap();
+        self.task_sender.send(TaskMsg::Bind(self.id.clone(), local_port)).unwrap();
 
         if let TaskRet::Bind(ret) = self.ret_recv.recv().unwrap() {
             if let Ok(ret_id) = ret {
@@ -92,7 +92,7 @@ impl Socket {
      * @return int 0 on success, -1 otherwise
      */
     pub fn listen(&self, backlog: u32) -> Result<(), isize> {
-        self.task_sender.lock().unwrap().send(TaskMsg::Listen((self.id.clone(), backlog))).unwrap();
+        self.task_sender.send(TaskMsg::Listen(self.id.clone(), backlog)).unwrap();
 
         if let TaskRet::Listen(ret) = self.ret_recv.recv().unwrap() {
             return ret;
@@ -120,7 +120,7 @@ impl Socket {
      * @return int 0 on success, -1 otherwise
      */
     pub fn connect(&mut self, dest_addr: String, dest_port: u8) -> Result<(), isize> {
-        self.task_sender.lock().unwrap().send(TaskMsg::Connect((self.id.clone(), dest_addr, dest_port))).unwrap();
+        self.task_sender.send(TaskMsg::Connect(self.id.clone(), dest_addr, dest_port)).unwrap();
         if let TaskRet::Connect(Ok(ret)) = self.ret_recv.recv().unwrap() {
             self.id = ret;
             return Ok(());

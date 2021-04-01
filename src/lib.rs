@@ -2,7 +2,7 @@ pub mod core {
     pub mod manager;
     pub mod socket;
     mod packet;
-    mod udp_loop;
+    pub mod udp_utils;
 }
 
 pub mod app {

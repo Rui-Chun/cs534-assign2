@@ -36,13 +36,13 @@ pub enum TransType {
  }
 
  #[derive(Default)]
-struct TransportPacket {
+pub struct TransportPacket {
     src_port: u8,
     dest_port: u8,
     t_type: TransType,
     window: u32,
     seq_num: u32,
-    payload: Vec<u8>,
+    payload: Option<Vec<u8>>,
 }
 
 impl TransportPacket {
@@ -51,8 +51,13 @@ impl TransportPacket {
     const MAX_PAYLOAD_SIZE: u32 = TransportPacket::MAX_PACKET_SIZE - TransportPacket::HEADER_SIZE;
 
     /// for sending packet, init with specific values
-    pub fn new (src_port: u8, dest_port: u8, t_type: TransType, window: u32, seq_num: u32, payload: Vec<u8>) -> Self {
-        assert!(payload.len() <= Self::MAX_PAYLOAD_SIZE as usize);
+    pub fn new (src_port: u8, dest_port: u8, t_type: TransType, window: u32, seq_num: u32, mut payload: Option<Vec<u8>>) -> Self {
+        if payload.is_some() {
+            let load = payload.unwrap();
+            assert!(load.len() <= Self::MAX_PAYLOAD_SIZE as usize);
+            payload = Some(load);
+        }
+
         TransportPacket{src_port, dest_port, t_type, window, seq_num, payload}
     }
 
@@ -70,7 +75,7 @@ impl TransportPacket {
      *        payload <= MAX_PAYLOAD_SIZE bytes
      * @return A byte[] for transporting over the wire. Null if failed to pack for some reason
      */
-    fn pack (mut self) -> Vec<u8> {
+    pub fn pack (mut self) -> Vec<u8> {
         let mut packet: Vec<u8> = Vec::with_capacity(TransportPacket::MAX_PACKET_SIZE as usize);
 
         packet.push(self.src_port);
@@ -78,7 +83,9 @@ impl TransportPacket {
         packet.push(self.t_type as u8);
         packet.extend(&self.window.to_be_bytes());
         packet.extend(&self.seq_num.to_be_bytes());
-        packet.append(&mut self.payload);
+        if self.payload.is_some() {
+            packet.append(&mut self.payload.unwrap());
+        }
 
         return packet;
     }
@@ -89,12 +96,14 @@ impl TransportPacket {
      * @param packet String representation of the transport packet
      * @return Transport object created or null if the byte[] representation was corrupted
      */
-    fn unpack (&mut self, mut packet: VecDeque<u8>) {
+    pub fn unpack (&mut self, mut packet: VecDeque<u8>) {
         self.src_port = packet.pop_front().unwrap();
         self.dest_port = packet.pop_front().unwrap();
         self.t_type = TransType::new(packet.pop_front().unwrap());
         self.window = u32::from_be_bytes(packet.drain(0..4).collect::<Vec<u8>>().try_into().unwrap());
         self.seq_num = u32::from_be_bytes(packet.drain(0..4).collect::<Vec<u8>>().try_into().unwrap());
-        self.payload = packet.into();
+        if packet.len() != 0 {
+            self.payload = Some(packet.into());
+        }
     }
 }
