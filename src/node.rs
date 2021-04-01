@@ -36,6 +36,12 @@ fn main() {
                 .help("Port of local node"),
         )
         .arg(
+            Arg::with_name("local_addr")
+                .long("la")
+                .takes_value(true)
+                .help("Address of local node"),
+        )
+        .arg(
             Arg::with_name("byte_num")
                 .long("bn")
                 .takes_value(true)
@@ -80,7 +86,6 @@ fn main() {
         .expect("can not parse exec type");
 
     
-    // TODO: change this to thread spawning ...
     match command.as_str() {
         "transfer" => {
             exec_transfer(arg_matches, task_sender, ret_channel_recv);
@@ -88,6 +93,9 @@ fn main() {
         "server" => {
             exec_server(arg_matches, task_sender, ret_channel_recv);
         },
+        "local_test" => {
+            exec_local_test(arg_matches, task_sender, ret_channel_recv);
+        }
         _ => {println!("Undefined exec command!");}
     }
 
@@ -106,7 +114,7 @@ fn main() {
 //     interval: execution interval of the transfer client, default 1 second
 //     buf_size: buffer size of the transfer client, default 65536
 fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
-    let dest: String = args
+    let dest_addr: String = args
         .value_of("dest_addr")
         .unwrap_or("127.0.0.1")
         .parse()
@@ -121,6 +129,11 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
         .unwrap_or("88")
         .parse()
         .expect("can not parse local port");
+    let local_addr: String = args
+        .value_of("local_addr")
+        .unwrap_or("127.0.0.1")
+        .parse()
+        .expect("can not parse local addr");
     let byte_num: u32 = args
         .value_of("num_byte")
         .unwrap_or("1024")
@@ -151,8 +164,9 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
     let task_sender = Arc::new(Mutex::new(task_sender));
     let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
 
-    let mut sock = Socket::new(task_sender.clone(), ret_channel_recv.clone());
+    let mut sock = Socket::new(local_addr, task_sender.clone(), ret_channel_recv.clone());
     sock.bind(local_port).expect("Can not bind local port!");
+    sock.connect(dest_addr, dest_port).expect("Can not establish connection.");
 
 }
 
@@ -172,6 +186,11 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
 //     workint: execution interval of the transfer worker, default 1 second
 //     sz: buffer size of the transfer worker, default 65536
 fn exec_server (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
+    let local_addr: String = args
+        .value_of("local_addr")
+        .unwrap_or("127.0.0.1")
+        .parse()
+        .expect("can not parse local addr");
     let local_port: u8 = args
         .value_of("local_port")
         .unwrap_or("88")
@@ -198,8 +217,12 @@ fn exec_server (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv
     let task_sender = Arc::new(Mutex::new(task_sender));
     let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
 
-    let mut sock = Socket::new(task_sender.clone(), ret_channel_recv.clone());
+    let mut sock = Socket::new(local_addr, task_sender.clone(), ret_channel_recv.clone());
     sock.bind(local_port).expect("Can not bind local port!");
     sock.listen(backlog).expect("Can not listen to port!");
 
+}
+
+fn exec_local_test (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
+    println!("It is not finished.");
 }

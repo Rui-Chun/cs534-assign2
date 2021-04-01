@@ -27,11 +27,17 @@ impl SocketContents {
 
 // Task Message from socket api to manager and from timer!
 pub enum TaskMsg {
-    // enum also can hold args
-    New,
+    // (enum also can hold args)
+    // ==== for socket API
+    New(String), // (local_addr)
     Bind((SocketID, u8)), // (sock_id, local_port)
     Listen((SocketID, u32)), // (sock_id, backlog)
-    // and so on
+    Accept(),
+    Connect((SocketID, String, u8)),
+    // ==== for UDP packet parsing
+    OnReceive(), // a new packet is received
+    // ==== for retransmission timer
+    TimeOut(), // timer send msg of time out
 }
 
 // return values for socket task
@@ -39,6 +45,8 @@ pub enum TaskRet {
     New(Result<SocketID, ()>), // return the assigned socket ID
     Bind(Result<SocketID, isize>), // return the updated sock ID
     Listen(Result<(), isize>),
+    Accept(),
+    Connect(Result<SocketID, isize>), // return the updated sock ID
 }
 
 pub struct SocketManager {
@@ -48,6 +56,7 @@ pub struct SocketManager {
 }
 
 impl SocketManager {
+    const BuffferCap: usize = 1 << 10; // how many bytes the buffer can hold
 
     pub fn new () -> Self {
         SocketManager{socket_map: HashMap::new(), ports_alloc: [false; 256]}
@@ -55,10 +64,10 @@ impl SocketManager {
 
     // go over the current list of used ports and assign a free local port.
     // this will distinguish the new socket
-    pub fn new_socket_id(&self) -> Result<SocketID, ()> {
+    pub fn new_socket_id(&self, local_addr: String) -> Result<SocketID, ()> {
         for port in 0..256 {
             if self.ports_alloc[port] == false {
-                return Ok(SocketID::new(port as u8));
+                return Ok(SocketID::new(local_addr, port as u8));
             }
         }
         return Err(());
@@ -72,7 +81,7 @@ impl SocketManager {
 
         for task in task_queue {
             match task {
-                TaskMsg::New => {
+                TaskMsg::New(local_addr) => {
                     // create the channel for ret values, one for each socket
                     let (ret_send, ret_recv) = mpsc::channel::<TaskRet>();
                     ret_channel_sender.send(ret_recv).unwrap();
@@ -80,7 +89,7 @@ impl SocketManager {
                     // store the ret sender inside the socket contents
                     let sock_content = SocketContents::new(ret_send);
                     // alloc a new sock id
-                    if let Ok(sock_id) = self.new_socket_id() {
+                    if let Ok(sock_id) = self.new_socket_id(local_addr) {
                         sock_content.send_ret(TaskRet::New(Ok(sock_id.clone()))).unwrap();
                         self.socket_map.insert(sock_id, sock_content);
                         println!("New(): new socket created!");
@@ -129,6 +138,34 @@ impl SocketManager {
                     }
                     // must put the entry back to hash map
                     self.socket_map.insert(id, sock_content);
+                }
+
+                TaskMsg::Connect((mut id, dest_addr, dest_port)) => {
+                    let mut sock_content = self.socket_map.remove(&id).unwrap();
+
+                    // check current state.
+                    if let SocketState::CLOSED = sock_content.state {
+                        id.remote_addr = dest_addr.parse().unwrap();
+                        id.remote_port = dest_port;
+                        // Maybe we do not need an extra udp request queue? Ok...
+                        // TODO: call udp utils and connect remote node.
+                        // fake it for now
+                        // ===== need code here ====
+                        // self.udp_dispatch.send_SYN() // this should be non-blocking !!!, just push to the queue
+                        // =======
+    
+                        sock_content.state = SocketState::SYN_SENT;
+                        sock_content.send_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
+                        sock_content.ret_sender.send(TaskRet::Connect(Ok(id.clone()))).unwrap();
+                        self.socket_map.insert(id, sock_content).unwrap();
+
+                    }
+                    else {
+                        println!("Connect(): Wrong state, cant connect to remote!");
+                        sock_content.ret_sender.send(TaskRet::Connect(Err(-1))).unwrap();
+                    }
+
+
                 }
                 _ => {}
             }

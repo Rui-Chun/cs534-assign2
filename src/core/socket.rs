@@ -18,16 +18,16 @@ pub enum SocketState {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SocketID {
-    pub src_addr: Ipv4Addr,
-    pub dest_addr: Ipv4Addr,
+    pub local_addr: Ipv4Addr,
+    pub remote_addr: Ipv4Addr,
     pub local_port: u8, // when user call the bind(), we do not know whether it is src or dest...
     pub remote_port: u8, // this can be either dest or src port, depending on whether server or cilent socket.
 }
 
 impl SocketID {
-    pub fn new (local_port: u8) -> Self {
+    pub fn new (local_addr: String, local_port: u8) -> Self {
         SocketID{
-            src_addr: Ipv4Addr::new(127, 0, 0, 1), dest_addr: Ipv4Addr::new(127, 0, 0, 1),
+            local_addr: local_addr.parse().unwrap(), remote_addr: Ipv4Addr::new(127, 0, 0, 1),
             local_port, remote_port: 0
         }
     }
@@ -46,9 +46,9 @@ pub struct Socket {
 */
 impl Socket {
 
-    pub fn new (task_sender: Arc<Mutex<Sender<TaskMsg>>>, ret_channel_recv: Arc<Mutex<Receiver<Receiver<TaskRet>>>>) -> Self {
+    pub fn new (local_addr: String ,task_sender: Arc<Mutex<Sender<TaskMsg>>>, ret_channel_recv: Arc<Mutex<Receiver<Receiver<TaskRet>>>>) -> Self {
 
-        task_sender.lock().unwrap().send(TaskMsg::New).unwrap();
+        task_sender.lock().unwrap().send(TaskMsg::New(local_addr)).unwrap();
         let ret_recv = ret_channel_recv.lock().unwrap().recv().unwrap();
 
         if let TaskRet::New(Ok(sock_id)) = ret_recv.recv().unwrap() {
@@ -80,7 +80,7 @@ impl Socket {
                 return Err(-1);
             }
         } else {
-            println!("Bind(): Can not get ret value!");
+            println!("Socket Bind(): Can not get ret value!");
             return Err(-1);
         }
     }
@@ -97,7 +97,7 @@ impl Socket {
         if let TaskRet::Listen(ret) = self.ret_recv.recv().unwrap() {
             return ret;
         } else {
-            println!("Listen(): Can not listen!");
+            println!("Socket Listen(): Can not listen!");
             return Err(-1);
         }
     }
@@ -119,8 +119,15 @@ impl Socket {
      * @param destPort int Destination port
      * @return int 0 on success, -1 otherwise
      */
-    pub fn connect(destAddr: String, destPort: u8) -> Result<(), isize> {
-        return Err(-1);
+    pub fn connect(&mut self, dest_addr: String, dest_port: u8) -> Result<(), isize> {
+        self.task_sender.lock().unwrap().send(TaskMsg::Connect((self.id.clone(), dest_addr, dest_port))).unwrap();
+        if let TaskRet::Connect(Ok(ret)) = self.ret_recv.recv().unwrap() {
+            self.id = ret;
+            return Ok(());
+        } else {
+            println!("Socket Connect(): Can not connect!");
+            return Err(-1);
+        }
     }
 
     /**
