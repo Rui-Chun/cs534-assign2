@@ -78,7 +78,9 @@ fn main() {
         .unwrap_or("transfer")
         .parse()
         .expect("can not parse exec type");
+
     
+    // TODO: change this to thread spawning ...
     match command.as_str() {
         "transfer" => {
             exec_transfer(arg_matches, task_sender, ret_channel_recv);
@@ -137,6 +139,7 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
 
     println!("transfer args parsed.");
 
+    // === example Java code ====
     // TCPSock sock = this.tcpMan.socket();
     // sock.bind(localPort);
     // sock.connect(destAddr, port);
@@ -148,7 +151,7 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
     let task_sender = Arc::new(Mutex::new(task_sender));
     let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
 
-    let sock = Socket::new(task_sender.clone(), ret_channel_recv.clone());
+    let mut sock = Socket::new(task_sender.clone(), ret_channel_recv.clone());
     sock.bind(local_port).expect("Can not bind local port!");
 
 }
@@ -169,17 +172,34 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
 //     workint: execution interval of the transfer worker, default 1 second
 //     sz: buffer size of the transfer worker, default 65536
 fn exec_server (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
-    let local_port: String = args
-        .value_of("dest_addr")
-        .unwrap_or("127.0.0.1")
+    let local_port: u8 = args
+        .value_of("local_port")
+        .unwrap_or("88")
         .parse()
-        .expect("can not parse dest addr");
-    let backlog: u16 = args
+        .expect("can not parse local port");
+    let backlog: u32 = args
         .value_of("backlog")
-        .unwrap_or("32")
+        .unwrap_or("16")
         .parse()
         .expect("can not parse backlog");
     
     println!("server args parsed.");
+
+    // === example Java code ====
+    // TCPSock sock = this.tcpMan.socket();
+    // sock.bind(port);
+    // sock.listen(backlog);
+
+    // TransferServer server = new
+    //    TransferServer(manager, this, sock, servint, workint, sz);
+    // server.start();
+
+    // share with multiple socks
+    let task_sender = Arc::new(Mutex::new(task_sender));
+    let ret_channel_recv = Arc::new(Mutex::new(ret_channel_recv));
+
+    let mut sock = Socket::new(task_sender.clone(), ret_channel_recv.clone());
+    sock.bind(local_port).expect("Can not bind local port!");
+    sock.listen(backlog).expect("Can not listen to port!");
 
 }

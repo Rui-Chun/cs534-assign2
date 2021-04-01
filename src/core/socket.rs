@@ -67,14 +67,21 @@ impl Socket {
      * @param localPort int local port number to bind the socket to
      * @return int 0 on success, -1 otherwise
      */
-    pub fn bind(&self, localPort: u8) -> Result<(), isize> {
+    pub fn bind(&mut self, local_port: u8) -> Result<(), isize> {
 
-        self.task_sender.lock().unwrap().send(TaskMsg::Bind((self.id.clone(), localPort))).unwrap();
+        self.task_sender.lock().unwrap().send(TaskMsg::Bind((self.id.clone(), local_port))).unwrap();
 
         if let TaskRet::Bind(ret) = self.ret_recv.recv().unwrap() {
-            return ret;
+            if let Ok(ret_id) = ret {
+                self.id = ret_id;
+                return Ok(());
+            }
+            else {
+                return Err(-1);
+            }
         } else {
-            panic!("Bind(): Can not get ret value!");
+            println!("Bind(): Can not get ret value!");
+            return Err(-1);
         }
     }
 
@@ -84,9 +91,15 @@ impl Socket {
      * @param backlog int Maximum number of pending connections
      * @return int 0 on success, -1 otherwise
      */
-    pub fn listen(backlog: u32) -> Result<(), isize> {
-        
-        return Err(-1);
+    pub fn listen(&self, backlog: u32) -> Result<(), isize> {
+        self.task_sender.lock().unwrap().send(TaskMsg::Listen((self.id.clone(), backlog))).unwrap();
+
+        if let TaskRet::Listen(ret) = self.ret_recv.recv().unwrap() {
+            return ret;
+        } else {
+            println!("Listen(): Can not listen!");
+            return Err(-1);
+        }
     }
 
     /**

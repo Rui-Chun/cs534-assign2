@@ -8,12 +8,14 @@ struct SocketContents {
     send_buf: Option<VecDeque<u8>>,
     recv_buf: Option<VecDeque<u8>>,
     ret_sender: Sender<TaskRet>,
+    // for server socket
+    backlog_que: Option<VecDeque<SocketID>>, // what should we store here?
 }
 
 impl SocketContents {
     pub fn new (ret_sender: Sender<TaskRet>) -> Self {
         SocketContents {
-            state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender
+            state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender, backlog_que: None
         }
     }
 
@@ -25,15 +27,18 @@ impl SocketContents {
 
 // Task Message from socket api to manager and from timer!
 pub enum TaskMsg {
+    // enum also can hold args
     New,
-    Bind((SocketID, u8)), // enum also can hold args
+    Bind((SocketID, u8)), // (sock_id, local_port)
+    Listen((SocketID, u32)), // (sock_id, backlog)
     // and so on
 }
 
 // return values for socket task
 pub enum TaskRet {
     New(Result<SocketID, ()>), // return the assigned socket ID
-    Bind(Result<(), isize>),
+    Bind(Result<SocketID, isize>), // return the updated sock ID
+    Listen(Result<(), isize>),
 }
 
 pub struct SocketManager {
@@ -89,7 +94,7 @@ impl SocketManager {
                         if let Some(content) = self.socket_map.remove(&id){
                             id.local_port = port;
                             // return Ok
-                            content.send_ret(TaskRet::Bind(Ok(()))).unwrap();
+                            content.send_ret(TaskRet::Bind(Ok(id.clone()))).unwrap();
                             self.socket_map.insert(id, content);
                             println!("Bind(): local port {} binded.", port);
                         }
@@ -107,6 +112,23 @@ impl SocketManager {
                             panic!("Bind(): Unknown socket id!");
                         }
                     }
+                }
+
+                TaskMsg::Listen((id, backlog)) => {
+                    let mut sock_content = self.socket_map.remove(&id).unwrap();
+                    if sock_content.backlog_que.is_some() {
+                        println!("Listen(): do not call listen twice!");
+                        sock_content.send_ret(TaskRet::Listen(Err(-1))).unwrap();
+                    }
+                    else {
+                        // switch to ==== LISTEN ==== state
+                        sock_content.state = SocketState::LISTEN;
+                        sock_content.backlog_que = Some(VecDeque::with_capacity(backlog as usize));
+                        println!("Listen(): start listening ...");
+                        sock_content.send_ret( TaskRet::Listen(Ok(())) ).unwrap();
+                    }
+                    // must put the entry back to hash map
+                    self.socket_map.insert(id, sock_content);
                 }
                 _ => {}
             }
