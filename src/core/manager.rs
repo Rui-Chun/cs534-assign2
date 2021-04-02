@@ -28,6 +28,7 @@ impl SocketContents {
 }
 
 // Task Message from socket api to manager and from timer!
+#[derive(Clone)]
 pub enum TaskMsg {
     // (enum also can hold args)
     // ==== for socket API
@@ -38,9 +39,9 @@ pub enum TaskMsg {
     Connect(SocketID, String, u8),
     // ==== for UDP packet parsing
     // a new packet is received
-    OnReceive(TransportPacket), // 
-    // ==== for retransmission timer
-    TimeOut(), // timer send msg of time out
+    OnReceive(TransportPacket),
+    // ==== for timer callback
+    SYNTimeOut(), // timer send msg of time out
 }
 
 // return values for socket task
@@ -171,6 +172,7 @@ impl SocketManager {
 
 
                 }
+                
                 TaskMsg::OnReceive(packet) => {
                     self.handle_receive(packet);
                 }
@@ -181,8 +183,10 @@ impl SocketManager {
     }
 
     // handler function when a packet is received.
+    // when ACK is recevied , the data in buf will be sent. The window slides.
     fn handle_receive (&mut self, packet: TransportPacket) {
-        println!("OnReceive(): Got a new packet!")
+        println!("OnReceive(): Got a new packet!");
+        
     }
 
 

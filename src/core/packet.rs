@@ -11,6 +11,7 @@ use std::{collections::VecDeque, convert::TryInto, u32, usize};
  */
 
 #[repr(u8)]
+#[derive(Clone)]
 pub enum TransType {
      SYN = 0,
      ACK,
@@ -35,7 +36,7 @@ pub enum TransType {
     }
  }
 
- #[derive(Default)]
+ #[derive(Default, Clone)]
 pub struct TransportPacket {
     src_port: u8,
     dest_port: u8,
