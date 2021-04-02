@@ -1,7 +1,6 @@
 use clap::{App, Arg, ArgMatches};
-use std::{env, sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread};
+use std::{env, sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, time};
 use my_tcp::{app, core::manager::{self, TaskMsg, TaskRet}, core::socket::Socket};
-use my_tcp::core::udp_utils;
 
 fn main() {
     println!("Starting a Transport Node!");
@@ -167,7 +166,8 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
     sock.bind(local_port).expect("Can not bind local port!");
     sock.connect(dest_addr, dest_port).expect("Can not establish connection.");
 
-    loop {}
+    // sleep to wait for other threads to do the job
+    thread::sleep(time::Duration::from_secs(5));
 
 }
 

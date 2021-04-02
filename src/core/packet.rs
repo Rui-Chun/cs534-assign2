@@ -42,23 +42,26 @@ pub struct TransportPacket {
     t_type: TransType,
     window: u32,
     seq_num: u32,
+    total_len: u8,
     payload: Option<Vec<u8>>,
 }
 
 impl TransportPacket {
-    const HEADER_SIZE: u32 = 12;
-    const MAX_PACKET_SIZE: u32 = 1024;
-    const MAX_PAYLOAD_SIZE: u32 = TransportPacket::MAX_PACKET_SIZE - TransportPacket::HEADER_SIZE;
+    const HEADER_SIZE: usize = 12;
+    const MAX_PACKET_SIZE: usize = 256; // we use only one byte for packet length (fishnet only has 128 bytes max len)
+    const MAX_PAYLOAD_SIZE: usize = TransportPacket::MAX_PACKET_SIZE - TransportPacket::HEADER_SIZE;
 
     /// for sending packet, init with specific values
     pub fn new (src_port: u8, dest_port: u8, t_type: TransType, window: u32, seq_num: u32, mut payload: Option<Vec<u8>>) -> Self {
+        let mut total_len: u8 = Self::HEADER_SIZE as u8;
         if payload.is_some() {
             let load = payload.unwrap();
-            assert!(load.len() <= Self::MAX_PAYLOAD_SIZE as usize);
+            assert!(load.len() <= Self::MAX_PAYLOAD_SIZE);
+            total_len = (Self::HEADER_SIZE + load.len()) as u8;
             payload = Some(load);
         }
 
-        TransportPacket{src_port, dest_port, t_type, window, seq_num, payload}
+        TransportPacket{src_port, dest_port, t_type, window, seq_num, total_len, payload}
     }
 
     // call default() to get an default packet to call unpack()
@@ -83,6 +86,7 @@ impl TransportPacket {
         packet.push(self.t_type as u8);
         packet.extend(&self.window.to_be_bytes());
         packet.extend(&self.seq_num.to_be_bytes());
+        packet.push(self.total_len);
         if self.payload.is_some() {
             packet.append(&mut self.payload.unwrap());
         }
@@ -102,8 +106,11 @@ impl TransportPacket {
         self.t_type = TransType::new(packet.pop_front().unwrap());
         self.window = u32::from_be_bytes(packet.drain(0..4).collect::<Vec<u8>>().try_into().unwrap());
         self.seq_num = u32::from_be_bytes(packet.drain(0..4).collect::<Vec<u8>>().try_into().unwrap());
+        self.total_len = packet.pop_front().unwrap();
+        assert!(packet.len() == (self.total_len as usize - Self::HEADER_SIZE), "Unpack(): Wrong payload size!");
         if packet.len() != 0 {
             self.payload = Some(packet.into());
         }
     }
+
 }

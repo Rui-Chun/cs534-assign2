@@ -155,11 +155,7 @@ impl SocketManager {
                         id.remote_addr = dest_addr.parse().unwrap();
                         id.remote_port = dest_port;
                         // Maybe we do not need an extra udp request queue? Ok...
-                        // TODO: call udp utils and connect remote node.
-                        // fake it for now
-                        // ===== need code here ====
-                        // self.udp_dispatch.send_SYN() // this should be non-blocking !!!, just push to the queue
-                        // =======
+                        // this send is non-blocking, it just puts the packet into the que
                         udp_send.send(PacketCmd::SYN(id.clone())).unwrap();
     
                         sock_content.state = SocketState::SYN_SENT;
@@ -175,10 +171,18 @@ impl SocketManager {
 
 
                 }
+                TaskMsg::OnReceive(packet) => {
+                    self.handle_receive(packet);
+                }
                 _ => {}
             }
         }
         
+    }
+
+    // handler function when a packet is received.
+    fn handle_receive (&mut self, packet: TransportPacket) {
+        println!("OnReceive(): Got a new packet!")
     }
 
 
