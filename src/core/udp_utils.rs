@@ -4,17 +4,15 @@ use std::net::{UdpSocket, IpAddr};
 
 use super::{packet::{TransType, TransportPacket}, socket::SocketID};
 use super::manager::TaskMsg;
-use rand::Rng;
-
 
 const UDP_IN_PORT: usize = 8848;
 const UDP_OUT_PORT: usize = 8888;
 // the manager sends the packet commands to the udp thread
 pub enum PacketCmd {
-    SYN(SocketID), // (sock_id)
+    SYN(SocketID, u32), // (sock_id)
     FIN(SocketID),
     ACK(SocketID, u32, u32), // (sock_id, window, seq_num)
-    DATA(SocketID),
+    DATA(SocketID, u32),
 }
 
 // == entry point of the udp loop thread ==
@@ -39,12 +37,12 @@ fn out_loop (cmd_recv: Receiver<PacketCmd>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
     // parse the commands
     for cmd in cmd_recv {
         match cmd {
-            PacketCmd::SYN(id) => {
+            PacketCmd::SYN(id, seq_num) => {
                 println!("UDP: SYN sending...");
                 let socket = UdpSocket::bind(format!("{}:{}", id.local_addr, UDP_OUT_PORT)).unwrap();
                 // no window, random seq_num, no payload
                 let packet = TransportPacket::new(id.local_port, id.remote_port, 
-                                                                  TransType::SYN, 0, rand::thread_rng().gen_range(0..2048), None);
+                                                                  TransType::SYN, 0, seq_num, None);
                 let out_buf = packet.pack();
                 let amt = socket.send_to(&out_buf, format!("{}:{}", id.remote_addr, UDP_IN_PORT)).unwrap();
                 if amt != out_buf.len() {

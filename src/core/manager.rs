@@ -3,6 +3,7 @@ use std::{collections::{HashMap, VecDeque}, sync::mpsc::{self, Receiver, SendErr
 use super::{socket::{SocketID, SocketState, Socket}, udp_utils::PacketCmd};
 use super::packet::{TransportPacket, TransType};
 use super::udp_utils;
+use rand::Rng;
 
 struct SocketContents {
     state: SocketState,
@@ -12,12 +13,27 @@ struct SocketContents {
     ret_sender: Sender<TaskRet>,
     // for server socket
     backlog_que: Option<VecDeque<Socket>>, // what should we store here?
+
+    // ==== sliding window pos ====
+    /// the start of sliding window, the first byte that is not acked
+    send_base: u32, 
+    /// the start of range to be filled with new data
+    send_next: u32,
+    /// send window size
+    send_wind: u32,
+
+    recv_base: u32,
+    recv_unack: u32,
+    recv_wind: u32,
+    
 }
 
 impl SocketContents {
     pub fn new (ret_sender: Sender<TaskRet>) -> Self {
         SocketContents {
-            state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender, backlog_que: None
+            state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender, backlog_que: None,
+            send_base:0, send_next:0, send_wind: SocketManager::BuffferCap as u32, 
+            recv_base:0, recv_unack:0, recv_wind: SocketManager::BuffferCap as u32
         }
     }
 
@@ -63,7 +79,7 @@ pub struct SocketManager {
 }
 
 impl SocketManager {
-    const BuffferCap: usize = 1 << 10; // how many bytes the buffer can hold
+    const BuffferCap: usize = 1 << 12; // how many bytes the buffer can hold
 
     pub fn new () -> (Self, Sender<TaskMsg>, Receiver<Receiver<TaskRet>>) {
         // the channel to send tasks of sockets
@@ -171,12 +187,17 @@ impl SocketManager {
                         id.remote_port = dest_port;
                         // Maybe we do not need an extra udp request queue? Ok...
                         // this send is non-blocking, it just puts the packet into the que
-                        self.udp_send.send(PacketCmd::SYN(id.clone())).unwrap();
+                        let seq_num = rand::thread_rng().gen_range(0..2048);
+                        self.udp_send.send(PacketCmd::SYN(id.clone(), seq_num)).unwrap();
                         // ========
                         // TODO: Setup timer for ACK timeout!
     
                         sock_content.state = SocketState::SYN_SENT;
                         sock_content.send_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
+                        // set up the window
+                        sock_content.send_base = seq_num;
+                        sock_content.send_next = seq_num + 1;
+
                         // send connect() ret value to the user socket.
                         sock_content.ret_sender.send(TaskRet::Connect(Ok(id.clone()))).unwrap();
                         self.socket_map.insert(id, sock_content);
@@ -219,10 +240,13 @@ impl SocketManager {
         match packet.get_type() {
             TransType::SYN => {
                 println!("OnReceive(): Got a SYN packet!");
-                // TODO: what if we got a retransmited SYN? -> just update the socket list?
+                // what if we got a retransmited SYN? -> just update the socket list?
+                // 1. if SYN is lost, the client will retransmit, no processing required,
+                // 2. if ACK is lost, the client will retransmit. The packet will match the new connection socket,
+                //    and since its state is not listen, nothing happens.
                 if let SocketState::LISTEN = sock_content_ref.state{
                     // Send ACK for SYN
-                    self.udp_send.send(PacketCmd::ACK(sock_id.clone(), Self::BuffferCap as u32, packet.get_seq_num())).unwrap();
+                    self.udp_send.send(PacketCmd::ACK(sock_id.clone(), Self::BuffferCap as u32, packet.get_seq_num()+1)).unwrap();
                     
                     // init a new socket for the incoming connection
                     // 1. new socket content
@@ -243,6 +267,28 @@ impl SocketManager {
                     // SYN arrived at a wrong time
                     // do nothing...
                 } 
+            }
+            TransType::ACK => {
+                println!("OnReceive(): Got a ACK packet!");
+                match sock_content_ref.state {
+                    SocketState::SYN_SENT => {
+                        // switch established state
+                        sock_content_ref.state = SocketState::ESTABLISHED;
+                        // move the window
+                        sock_content_ref.send_base = packet.get_seq_num();
+                        assert!(sock_content_ref.send_base <= sock_content_ref.send_next);
+                        println!("OnReceive(): New connection established!");
+                    }
+                    SocketState::ESTABLISHED => {
+                        // move the window
+                        sock_content_ref.send_base = packet.get_seq_num();
+                        assert!(sock_content_ref.send_base <= sock_content_ref.send_next);
+                    }
+                    _ => {
+                        println!("This state is not handled yet.")
+                    }
+                }
+                // TODO: ACK should trigger new sending
             }
             _ => {
                 println!("OnReceive(): Undefined packet type!");
