@@ -186,6 +186,23 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     // the receiving socket at server
     let server_recv =  server_sock.accept().expect("Can not get connection!");
 
+    let mut test_data = Vec::new();
+    for i in 0..200 {
+        test_data.push(i as u8);
+    }
+    let test_data = client_sock.write(&test_data, 0, 200).unwrap();
+    println!("Len = {} wrote ", test_data);
+
+    // wait
+    thread::sleep(time::Duration::from_millis(10));
+
+    let recv_data = server_recv.read(200).unwrap();
+
+    for i in 0..200 {
+        assert!(recv_data[i] == i as u8);
+    }
+    println!("All data right!");
+
     // sleep to wait for other threads to do the job
     thread::sleep(time::Duration::from_secs(10));
 }

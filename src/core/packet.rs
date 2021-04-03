@@ -55,7 +55,7 @@ pub struct TransportPacket {
 impl TransportPacket {
     const HEADER_SIZE: usize = 12;
     const MAX_PACKET_SIZE: usize = 256; // we use only one byte for packet length (fishnet only has 128 bytes max len)
-    const MAX_PAYLOAD_SIZE: usize = TransportPacket::MAX_PACKET_SIZE - TransportPacket::HEADER_SIZE;
+    pub const MAX_PAYLOAD_SIZE: usize = TransportPacket::MAX_PACKET_SIZE - TransportPacket::HEADER_SIZE;
 
     /// for sending packet, init with specific values
     pub fn new (src_port: u8, dest_port: u8, t_type: TransType, window: u32, seq_num: u32, mut payload: Option<Vec<u8>>) -> Self {
@@ -144,6 +144,14 @@ impl TransportPacket {
 
     pub fn get_seq_num (&self) -> u32 {
         self.seq_num.clone()
+    }
+
+    pub fn get_payload_len (&self) -> u32 {
+        self.payload.as_ref().unwrap().len() as u32
+    }
+
+    pub fn get_payload (&self) -> &Vec<u8> {
+        self.payload.as_ref().unwrap()
     }
 
 }

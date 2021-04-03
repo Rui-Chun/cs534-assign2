@@ -12,7 +12,7 @@ pub enum PacketCmd {
     SYN(SocketID, u32), // (sock_id)
     FIN(SocketID),
     ACK(SocketID, u32, u32), // (sock_id, window, seq_num)
-    DATA(SocketID, u32),
+    DATA(SocketID, u32, Vec<u8>),
 }
 
 // == entry point of the udp loop thread ==
@@ -58,6 +58,18 @@ fn out_loop (cmd_recv: Receiver<PacketCmd>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
                 // with window and seq_num, no payload
                 let packet = TransportPacket::new(id.local_port, id.remote_port, 
                                                                   TransType::ACK, window, seq_num, None);
+                let out_buf = packet.pack();
+                let amt = socket.send_to(&out_buf, format!("{}:{}", id.remote_addr, UDP_IN_PORT)).unwrap();
+                if amt != out_buf.len() {
+                    panic!("Can not send complete packet!");
+                }
+            }
+            PacketCmd::DATA(id, seq_num, data) => {
+                println!("UDP: DATA sending...");
+                let socket = UdpSocket::bind(format!("{}:{}", id.local_addr, UDP_OUT_PORT)).unwrap();
+                // with window and seq_num, no payload
+                let packet = TransportPacket::new(id.local_port, id.remote_port, 
+                                                                  TransType::DATA, 0, seq_num, Some(data));
                 let out_buf = packet.pack();
                 let amt = socket.send_to(&out_buf, format!("{}:{}", id.remote_addr, UDP_IN_PORT)).unwrap();
                 if amt != out_buf.len() {

@@ -1,5 +1,5 @@
 use core::panic;
-use std::{hash::Hash, net::Ipv4Addr};
+use std::{hash::Hash, net::Ipv4Addr, usize};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::{Arc, Mutex};
 
@@ -155,31 +155,41 @@ impl Socket {
     }
 
     /**
-     * Write to the socket up to len bytes from the buffer buf starting at
-     * position pos.
+     * Write to the socket up to len bytes from the buffer buf starting at position pos.
      *
      * @param buf byte[] the buffer to write from
      * @param pos int starting position in buffer
      * @param len int number of bytes to write
-     * @return int on success, the number of bytes written, which may be smaller
-     *             than len; on failure, -1
+     * @return int on success, the number of bytes written, which may be smaller than len; on failure, -1
      */
-    pub fn write(buf: Vec<u8>, pos: u32, len: u32) -> Result<(), isize> {
-        return Err(-1);
+    pub fn write(&self, buf: &Vec<u8>, pos: usize, len: usize) -> Result<usize, isize> {
+        self.task_sender.send(TaskMsg::Write(self.id.clone(), buf.to_owned(), pos as u32, len as u32)).unwrap();
+
+        if let TaskRet::Write(ret) = self.ret_recv.recv().unwrap() {
+            return ret;
+        } else {
+            println!("Socket Write(): Can not write!");
+            return Err(-1);
+        }
+
     }
 
     /**
      * Read from the socket up to len bytes into the buffer buf starting at
      * position pos.
      *
-     * @param buf byte[] the buffer
-     * @param pos int starting position in buffer
      * @param len int number of bytes to read
-     * @return int on success, the number of bytes read, which may be smaller
-     *             than len; on failure, -1
+     * @return return the data if successful, else return err code
      */
-    pub fn read(buf: &mut Vec<u8>, pos: u32, len: u32) -> Result<(), isize> {
-        return Err(-1);
+    pub fn read(&self, len: usize) -> Result<Vec<u8>, isize> {
+        self.task_sender.send(TaskMsg::Read(self.id.clone(), len as u32)).unwrap();
+
+        if let TaskRet::Read(ret) = self.ret_recv.recv().unwrap() {
+            return ret;
+        } else {
+            println!("Socket Read(): Can not read!");
+            return Err(-1);
+        }
     }
 
     // pub fn isConnectionPending(&self) -> bool {

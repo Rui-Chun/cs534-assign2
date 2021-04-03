@@ -1,7 +1,7 @@
 use core::panic;
-use std::{collections::{HashMap, VecDeque}, sync::mpsc::{self, Receiver, SendError, Sender}, net::Ipv4Addr, usize};
+use std::{cmp::{self, min}, collections::{HashMap, VecDeque}, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, u32, usize, vec};
 use super::{socket::{SocketID, SocketState, Socket}, udp_utils::PacketCmd};
-use super::packet::{TransportPacket, TransType};
+use super::packet::{self, TransportPacket, TransType};
 use super::udp_utils;
 use rand::Rng;
 
@@ -51,14 +51,26 @@ impl SocketContents {
 pub enum TaskMsg {
     // (enum also can hold args)
     // ==== for socket API
-    New(String), // (local_addr)
-    Bind(SocketID, u8), // (sock_id, local_port)
-    Listen(SocketID, u32), // (sock_id, backlog)
+    /// (local_addr)
+    New(String),
+    /// (sock_id, local_port)
+    Bind(SocketID, u8),
+    /// (sock_id, backlog)
+    Listen(SocketID, u32),
     Accept(SocketID),
+    /// (sock_id, dest_addr, dest_port)
     Connect(SocketID, String, u8),
-    // ==== for UDP packet parsing
+    /// (sock_id, buf, pos, len)
+    Write(SocketID, Vec<u8>, u32, u32),
+    /// (sock_id, len)
+    Read(SocketID, u32),
+
+    // ==== UDP packets related
     // a new packet is received
     OnReceive(TransportPacket),
+    // schedule a sending task
+    SendNow(SocketID, u32, u32), // (sock_id, seq_start, len)
+
     // ==== for timer callback
     SYNTimeOut(), // timer send msg of time out
 }
@@ -70,6 +82,8 @@ pub enum TaskRet {
     Listen(Result<(), isize>),
     Accept(Result<Socket, isize>),
     Connect(Result<SocketID, isize>), // return the updated sock ID
+    Write(Result<usize, isize>), // return data left un-written
+    Read(Result<Vec<u8>, isize>),
 }
 
 pub struct SocketManager {
@@ -214,6 +228,12 @@ impl SocketManager {
                 }
 
                 TaskMsg::Accept(sock_id) => self.handle_accept(sock_id),
+
+                TaskMsg::Write(sock_id, buf, pos, len) => self.handle_write(sock_id, buf, pos, len),
+
+                TaskMsg::SendNow(sock_id, seq_num, len) => self.handle_sendnow(sock_id, seq_num, len),
+
+                TaskMsg::Read(sock_id, len) => self.handle_read(sock_id, len),
                 
                 TaskMsg::OnReceive(packet) => self.handle_receive(packet),
 
@@ -239,6 +259,66 @@ impl SocketManager {
             sock_content.send_ret(TaskRet::Accept(Err(0))).unwrap();
         }
 
+    }
+
+    /// handler function when write() API is called
+    /// this function is non-blocking, only copy the buffer
+    fn handle_write (&mut self, sock_id: SocketID, buf: Vec<u8>, pos: u32, len: u32) {
+        let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
+
+        // write send buf
+        let to_write = cmp::min(sock_content.send_base + sock_content.send_wind - sock_content.send_next, len);
+        sock_content.send_buf.as_mut().unwrap().extend(buf[pos as usize..(pos+to_write) as usize].iter());
+        sock_content.send_next += to_write;
+
+        // schedule a sending task
+        self.task_send.send(TaskMsg::SendNow(sock_id, sock_content.send_next - to_write, to_write)).unwrap();
+
+        // send ret value
+        sock_content.send_ret(TaskRet::Write(Ok( to_write as usize ))).unwrap();
+
+        assert!(sock_content.send_next - sock_content.send_base == sock_content.send_buf.as_mut().unwrap().len() as u32,
+                "Send buf size does not fit!");
+    }
+
+    /// handler function for SendNow task
+    fn handle_sendnow(&mut self, sock_id: SocketID, seq_num: u32, mut len:u32) {
+        let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
+
+        // send packets until done
+        loop {
+            let to_send = cmp::min(packet::TransportPacket::MAX_PAYLOAD_SIZE, len as usize);
+            let data = sock_content.send_buf.as_mut().unwrap().make_contiguous();
+            let start_index = (seq_num - sock_content.send_base) as usize;
+            let data = Vec::from(&data[start_index..start_index+to_send]);
+            self.udp_send.send(PacketCmd::DATA(sock_id.clone(), seq_num, data)).unwrap();
+
+            if to_send >= len as usize {break;}
+            else {
+                len -= to_send as u32;
+            }
+        }
+        // done
+    }
+
+    /// handler function when read API is called
+    fn handle_read (&mut self, sock_id: SocketID, len: u32) {
+        let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
+
+        // derive the byte num to read
+        let buf_left = sock_content.recv_next - sock_content.recv_base;
+        let to_read = cmp::min(buf_left, len) as usize;
+
+        // send data read
+        let buf_read: Vec<u8> = sock_content.recv_buf.as_mut().unwrap().drain(..to_read).collect();
+        sock_content.send_ret(TaskRet::Read(Ok( buf_read ))).unwrap();
+
+        // move window
+        sock_content.recv_base += to_read as u32;
+        assert!(sock_content.recv_base <= sock_content.recv_next);
+        assert!(sock_content.recv_next - sock_content.recv_base == sock_content.recv_buf.as_ref().unwrap().len() as u32);
+        assert!(sock_content.recv_next - sock_content.recv_base <= sock_content.recv_wind);
+        
     }
 
     /// handler function when a packet is received.
@@ -314,8 +394,25 @@ impl SocketManager {
                         println!("This state is not handled yet.")
                     }
                 }
-                // TODO: ACK should trigger new sending
+                // TODO: ACK should trigger new sending, or not?
             }
+            TransType::DATA => {
+                println!("OnReceive(): Got a DATA packet!");
+                if let SocketState::ESTABLISHED = sock_content_ref.state {
+                    let buf_left = sock_content_ref.recv_wind - sock_content_ref.recv_next + sock_content_ref.recv_base;
+                    let to_recv = cmp::min(buf_left, packet.get_payload_len());
+
+                    // copy to recv buf
+                    sock_content_ref.recv_buf.as_mut().unwrap().extend(packet.get_payload()[..to_recv as usize].iter());
+                    sock_content_ref.recv_next += to_recv;
+                    assert!(sock_content_ref.recv_next - sock_content_ref.recv_base <= sock_content_ref.recv_wind);
+                    assert!(sock_content_ref.recv_next - sock_content_ref.recv_base == sock_content_ref.recv_buf.as_ref().unwrap().len() as u32);
+
+                } else {
+                    panic!("Wrong state, should not receive data packet!");
+                }
+            }
+
             _ => {
                 println!("OnReceive(): Undefined packet type!");
             }
