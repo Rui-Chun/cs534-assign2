@@ -69,14 +69,9 @@ fn main() {
         .get_matches();
 
     // ===== start socket manager ====
-    let mut socket_manager = manager::SocketManager::new();
-    // the channel to send tasks of sockets
-    let (task_sender, task_receiver) = mpsc::channel::<manager::TaskMsg>();
-    // the channel to send the return value channel, channel of channel...
-    let (ret_channel_send, ret_channel_recv) = mpsc::channel::<mpsc::Receiver<manager::TaskRet>>();
-    let task_sender_c = task_sender.clone();
+    let (mut socket_manager, task_sender, ret_channel_recv) = manager::SocketManager::new();
     thread::spawn(move || {
-        socket_manager.start(task_sender_c, task_receiver, ret_channel_send);
+        socket_manager.start();
     });
 
     // get exec type

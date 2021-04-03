@@ -1,7 +1,7 @@
 use core::panic;
 use std::{collections::{HashMap, VecDeque}, sync::mpsc::{self, Receiver, SendError, Sender}, usize};
 use super::{socket::{SocketID, SocketState, Socket}, udp_utils::PacketCmd};
-use super::packet::TransportPacket;
+use super::packet::{TransportPacket, TransType};
 use super::udp_utils;
 
 struct SocketContents {
@@ -55,15 +55,31 @@ pub enum TaskRet {
 
 pub struct SocketManager {
     socket_map: HashMap<SocketID, SocketContents>, // use hashmap to make recv packet mapping quick
-    // task_queue: mpsc::Receiver<TaskMsg> // this is a channel which is also a queue
+    task_send: Sender<TaskMsg>,
+    task_queue: Receiver<TaskMsg>, // this is a channel which is also a queue
+    ret_channel_send: Sender<Receiver<TaskRet>>,
+    udp_send: Sender<PacketCmd>,
     ports_alloc: [bool; 256],
 }
 
 impl SocketManager {
     const BuffferCap: usize = 1 << 10; // how many bytes the buffer can hold
 
-    pub fn new () -> Self {
-        SocketManager{socket_map: HashMap::new(), ports_alloc: [false; 256]}
+    pub fn new () -> (Self, Sender<TaskMsg>, Receiver<Receiver<TaskRet>>) {
+        // the channel to send tasks of sockets
+        let (task_send, task_queue) = mpsc::channel::<TaskMsg>();
+        // the channel to send the return value channel, channel of channel...
+        let (ret_channel_send, ret_channel_recv) = mpsc::channel::<mpsc::Receiver<TaskRet>>();
+        
+        // ==== start udp loops ====
+        let (udp_send, udp_recv) = mpsc::channel::<PacketCmd>();
+        udp_utils::start_loops(udp_recv, task_send.clone());
+
+        (
+            SocketManager{socket_map: HashMap::new(), task_send: task_send.clone(), task_queue, ret_channel_send, udp_send, ports_alloc: [false; 256]},
+            task_send,
+            ret_channel_recv,
+        )
     }
 
     // go over the current list of used ports and assign a free local port.
@@ -81,18 +97,16 @@ impl SocketManager {
      * Start this TCP manager
      * the entry point of manager thread
      */
-    pub fn start(&mut self, task_sender: mpsc::Sender<TaskMsg>, task_queue: mpsc::Receiver<TaskMsg> , ret_channel_sender: mpsc::Sender<mpsc::Receiver<TaskRet>>) {
-        // ==== start udp loops ====
-        let (udp_send, udp_recv) = mpsc::channel::<PacketCmd>();
-        udp_utils::start_loops(udp_recv, task_sender.clone());
+    pub fn start(mut self) {
 
         // handle tasks
-        for task in task_queue {
+        loop {
+            let task = self.task_queue.recv().unwrap();
             match task {
                 TaskMsg::New(local_addr) => {
                     // create the channel for ret values, one for each socket
                     let (ret_send, ret_recv) = mpsc::channel::<TaskRet>();
-                    ret_channel_sender.send(ret_recv).unwrap();
+                    self.ret_channel_send.send(ret_recv).unwrap();
 
                     // store the ret sender inside the socket contents
                     let sock_content = SocketContents::new(ret_send);
@@ -157,10 +171,13 @@ impl SocketManager {
                         id.remote_port = dest_port;
                         // Maybe we do not need an extra udp request queue? Ok...
                         // this send is non-blocking, it just puts the packet into the que
-                        udp_send.send(PacketCmd::SYN(id.clone())).unwrap();
+                        self.udp_send.send(PacketCmd::SYN(id.clone())).unwrap();
+                        // ========
+                        // TODO: Setup timer for ACK timeout!
     
                         sock_content.state = SocketState::SYN_SENT;
                         sock_content.send_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
+                        // send connect() ret value to the user socket.
                         sock_content.ret_sender.send(TaskRet::Connect(Ok(id.clone()))).unwrap();
                         self.socket_map.insert(id, sock_content);
 
@@ -186,7 +203,20 @@ impl SocketManager {
     // when ACK is recevied , the data in buf will be sent. The window slides.
     fn handle_receive (&mut self, packet: TransportPacket) {
         println!("OnReceive(): Got a new packet!");
-        
+        let sock_id = packet.get_sock_id();
+        let sock_content = self.socket_map.remove(&sock_id).expect("Can not find socket in map!");
+
+        match packet.get_type() {
+            TransType::SYN => {
+                println!("OnReceive(): Got a SYN packet!");
+                if let SocketState::LISTEN = sock_content.state{
+
+                }
+            }
+            _ => {
+                println!("OnReceive(): Undefined packet type!");
+            }
+        }
     }
 
 

@@ -1,4 +1,6 @@
-use std::{collections::VecDeque, convert::TryInto, u32, usize};
+use std::{collections::VecDeque, convert::TryInto, net::Ipv4Addr, u32, usize};
+
+use super::socket::SocketID;
 
 /// transport packet, following fishnet format
 
@@ -36,7 +38,7 @@ pub enum TransType {
     }
  }
 
- #[derive(Default, Clone)]
+ #[derive(Clone)]
 pub struct TransportPacket {
     src_port: u8,
     dest_port: u8,
@@ -45,6 +47,9 @@ pub struct TransportPacket {
     seq_num: u32,
     total_len: u8,
     payload: Option<Vec<u8>>,
+    // To keep recording only, do not inclue them in the packet
+    src_addr: Ipv4Addr,
+    dest_addr: Ipv4Addr,
 }
 
 impl TransportPacket {
@@ -62,7 +67,13 @@ impl TransportPacket {
             payload = Some(load);
         }
 
-        TransportPacket{src_port, dest_port, t_type, window, seq_num, total_len, payload}
+        TransportPacket{src_port, dest_port, t_type, window, seq_num, total_len, payload, 
+                        src_addr: Ipv4Addr::new(127, 0, 0, 1), dest_addr: Ipv4Addr::new(127, 0, 0, 1)}
+    }
+
+    pub fn default () -> Self {
+        TransportPacket{src_port: 0, dest_port: 0, t_type: TransType::ACK, window: 0, seq_num: 0, total_len: 0, payload: None, 
+                        src_addr: Ipv4Addr::new(127, 0, 0, 1), dest_addr: Ipv4Addr::new(127, 0, 0, 1)}
     }
 
     // call default() to get an default packet to call unpack()
@@ -101,7 +112,7 @@ impl TransportPacket {
      * @param packet String representation of the transport packet
      * @return Transport object created or null if the byte[] representation was corrupted
      */
-    pub fn unpack (&mut self, mut packet: VecDeque<u8>) {
+    pub fn unpack (&mut self, mut packet: VecDeque<u8>, src_addr: Ipv4Addr, dest_addr: Ipv4Addr) {
         self.src_port = packet.pop_front().unwrap();
         self.dest_port = packet.pop_front().unwrap();
         self.t_type = TransType::new(packet.pop_front().unwrap());
@@ -112,6 +123,23 @@ impl TransportPacket {
         if packet.len() != 0 {
             self.payload = Some(packet.into());
         }
+        // for manager reference only
+        self.src_addr = src_addr;
+        self.dest_addr = dest_addr;
+    }
+
+    // this only works for recv packet
+    pub fn get_sock_id (&self) -> SocketID {
+        SocketID{
+            local_addr: self.dest_addr,
+            local_port: self.dest_port,
+            remote_addr: self.src_addr,
+            remote_port: self.src_port,
+        }
+    }
+
+    pub fn get_type (&self) -> TransType {
+        self.t_type.clone()
     }
 
 }

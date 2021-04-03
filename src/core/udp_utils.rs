@@ -1,6 +1,6 @@
 use core::panic;
 use std::{collections::VecDeque, net::Ipv4Addr, sync::{Arc, Mutex, mpsc::{Receiver, Sender}}, thread, usize};
-use std::net::UdpSocket;
+use std::net::{UdpSocket, IpAddr};
 
 use super::{packet::{TransType, TransportPacket}, socket::SocketID};
 use super::manager::TaskMsg;
@@ -84,7 +84,12 @@ fn in_loop (task_send: Sender<TaskMsg>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
         let mut packet = TransportPacket::default();
         let tmp = VecDeque::from(Vec::from(&in_buf[0..amt]));
         println!("Got packet, Len = {}", tmp.len());
-        packet.unpack(tmp);
+        if let IpAddr::V4(src_addr) = src.ip() {
+            packet.unpack(tmp, src_addr, *udp_in_addr.lock().unwrap(),);
+
+        } else {
+            panic!("can not parse ipv4 addr!");
+        }
         task_send.send(TaskMsg::OnReceive(packet)).unwrap();
     }
 
