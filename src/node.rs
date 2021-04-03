@@ -180,7 +180,11 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     client_sock.bind(args.local_port + 1).expect("Can not bind local port!");
     client_sock.connect(args.local_addr, args.local_port).expect("Can not establish connection.");
 
-    
+    // wait for the connection to be established
+    thread::sleep(time::Duration::from_millis(10));
+
+    // the receiving socket at server
+    let server_recv =  server_sock.accept().expect("Can not get connection!");
 
     // sleep to wait for other threads to do the job
     thread::sleep(time::Duration::from_secs(10));

@@ -113,9 +113,15 @@ impl Socket {
      * Non-blocking?
      * @return TCPSock The first established connection on the request queue
      */
-    pub fn accept() -> Result<Self, isize> {
+    pub fn accept(&self) -> Result<Self, isize> {
+        self.task_sender.send(TaskMsg::Accept(self.id.clone())).unwrap();
 
-        return Err(-1); // no pending connection
+        if let TaskRet::Accept(ret) = self.ret_recv.recv().unwrap() {
+            return ret;
+        } else {
+            println!("Socket Accept(): Can not accept!");
+            return Err(-1);
+        }
     }
 
     /**

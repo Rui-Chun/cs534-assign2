@@ -22,8 +22,11 @@ struct SocketContents {
     /// send window size
     send_wind: u32,
 
+    /// the start of bytes to be read by user
     recv_base: u32,
-    recv_unack: u32,
+    // the start of bytes to be filled
+    recv_next: u32,
+    /// recv window size
     recv_wind: u32,
     
 }
@@ -33,7 +36,7 @@ impl SocketContents {
         SocketContents {
             state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender, backlog_que: None,
             send_base:0, send_next:0, send_wind: SocketManager::BuffferCap as u32, 
-            recv_base:0, recv_unack:0, recv_wind: SocketManager::BuffferCap as u32
+            recv_base:0, recv_next:0, recv_wind: SocketManager::BuffferCap as u32
         }
     }
 
@@ -51,7 +54,7 @@ pub enum TaskMsg {
     New(String), // (local_addr)
     Bind(SocketID, u8), // (sock_id, local_port)
     Listen(SocketID, u32), // (sock_id, backlog)
-    Accept(),
+    Accept(SocketID),
     Connect(SocketID, String, u8),
     // ==== for UDP packet parsing
     // a new packet is received
@@ -65,7 +68,7 @@ pub enum TaskRet {
     New(Result<SocketID, ()>), // return the assigned socket ID
     Bind(Result<SocketID, isize>), // return the updated sock ID
     Listen(Result<(), isize>),
-    Accept(),
+    Accept(Result<Socket, isize>),
     Connect(Result<SocketID, isize>), // return the updated sock ID
 }
 
@@ -208,19 +211,37 @@ impl SocketManager {
                         sock_content.ret_sender.send(TaskRet::Connect(Err(-1))).unwrap();
                     }
 
+                }
 
-                }
+                TaskMsg::Accept(sock_id) => self.handle_accept(sock_id),
                 
-                TaskMsg::OnReceive(packet) => {
-                    self.handle_receive(packet);
-                }
+                TaskMsg::OnReceive(packet) => self.handle_receive(packet),
+
                 _ => {}
             }
         }
         
     }
 
-    // handler function when a packet is received.
+    /// handler function when accept() API is called
+    fn handle_accept (&mut self, sock_id: SocketID) {
+        let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
+
+        // pop a incomming connection
+        let backlog_que_ref = &mut sock_content.backlog_que;
+        let new_sock_try = backlog_que_ref.as_mut().unwrap().pop_front();
+
+        if let Some(sock) = new_sock_try {
+            // return new socket
+            sock_content.send_ret(TaskRet::Accept(Ok(sock))).unwrap();
+        } else {
+            // return err since on connection left
+            sock_content.send_ret(TaskRet::Accept(Err(0))).unwrap();
+        }
+
+    }
+
+    /// handler function when a packet is received.
     // when ACK is recevied , the data in buf will be sent. The window slides.
     fn handle_receive (&mut self, packet: TransportPacket) {
         println!("OnReceive(): Got a new packet!");
@@ -254,10 +275,15 @@ impl SocketManager {
                     let mut new_sock_content = SocketContents::new(ret_send);
                     new_sock_content.state = SocketState::ESTABLISHED;
                     new_sock_content.recv_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
-                    let new_sock = Socket::new_coonection(sock_id.clone(), self.task_send.clone(), ret_recv);
+                    // set up window
+                    new_sock_content.recv_base = packet.get_seq_num()+1;
+                    new_sock_content.recv_next = packet.get_seq_num()+1;
+
                     // 2. push socket API into the queue
+                    let new_sock = Socket::new_coonection(sock_id.clone(), self.task_send.clone(), ret_recv);
                     let backlog_que_ref = &mut sock_content_ref.backlog_que;
                     backlog_que_ref.as_mut().unwrap().push_back(new_sock);
+
                     // 3. push new socket to map
                     println!("OnReceive(): New socket pushed to backlog!");
                     self.socket_map.insert(sock_id.clone(), new_sock_content);
