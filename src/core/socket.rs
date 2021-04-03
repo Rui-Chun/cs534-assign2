@@ -27,7 +27,8 @@ pub struct SocketID {
 impl SocketID {
     pub fn new (local_addr: String, local_port: u8) -> Self {
         SocketID{
-            local_addr: local_addr.parse().unwrap(), remote_addr: Ipv4Addr::new(127, 0, 0, 1),
+            // remote addr = 0.0.0.0 is used by server listening
+            local_addr: local_addr.parse().unwrap(), remote_addr: Ipv4Addr::new(0, 0, 0, 0),
             local_port, remote_port: 0
         }
     }
@@ -46,6 +47,7 @@ pub struct Socket {
 */
 impl Socket {
 
+    /// init a new socket, called by user applications
     pub fn new (local_addr: String ,task_sender: Sender<TaskMsg>, ret_channel_recv: &Receiver<Receiver<TaskRet>>) -> Self {
 
         task_sender.send(TaskMsg::New(local_addr)).unwrap();
@@ -58,7 +60,11 @@ impl Socket {
         else {
             panic!("No ports available.");
         }
+    }
 
+    /// a new server connection, called by manager only
+    pub fn new_coonection (sock_id: SocketID, task_sender: Sender<TaskMsg>, ret_recv: Receiver<TaskRet>) -> Self{
+        Socket{id: sock_id, task_sender, ret_recv}
     }
 
     /**

@@ -1,6 +1,6 @@
 use clap::{App, Arg, ArgMatches};
-use std::{env, sync::{Arc, Mutex, mpsc::{self, Sender, Receiver}}, thread, time};
-use my_tcp::{app, core::manager::{self, TaskMsg, TaskRet}, core::socket::Socket};
+use std::{sync::{mpsc::{Sender, Receiver}}, thread, time};
+use my_tcp::{core::manager::{self, TaskMsg, TaskRet}, core::socket::Socket};
 
 fn main() {
     println!("Starting a Transport Node!");
@@ -77,20 +77,21 @@ fn main() {
     // get exec type
     let command: String = arg_matches
         .value_of("exec_type")
-        .unwrap_or("transfer")
+        .unwrap_or("local_test")
         .parse()
         .expect("can not parse exec type");
 
+    let args = parse_args(arg_matches);
     
     match command.as_str() {
         "transfer" => {
-            exec_transfer(arg_matches, task_sender, ret_channel_recv);
+            exec_transfer(args, task_sender, ret_channel_recv);
         },
         "server" => {
-            exec_server(arg_matches, task_sender, ret_channel_recv);
+            exec_server(args, task_sender, ret_channel_recv);
         },
         "local_test" => {
-            exec_local_test(arg_matches, task_sender, ret_channel_recv);
+            exec_local_test(args, task_sender, ret_channel_recv);
         }
         _ => {println!("Undefined exec command!");}
     }
@@ -109,42 +110,7 @@ fn main() {
 // Optional arguments:
 //     interval: execution interval of the transfer client, default 1 second
 //     buf_size: buffer size of the transfer client, default 65536
-fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
-    let dest_addr: String = args
-        .value_of("dest_addr")
-        .unwrap_or("127.0.0.1")
-        .parse()
-        .expect("can not parse dest addr");
-    let dest_port: u8 = args
-        .value_of("dest_port")
-        .unwrap_or("88")
-        .parse()
-        .expect("can not parse dest port");
-    let local_port: u8 = args
-        .value_of("local_port")
-        .unwrap_or("88")
-        .parse()
-        .expect("can not parse local port");
-    let local_addr: String = args
-        .value_of("local_addr")
-        .unwrap_or("127.0.0.1")
-        .parse()
-        .expect("can not parse local addr");
-    let byte_num: u32 = args
-        .value_of("num_byte")
-        .unwrap_or("1024")
-        .parse()
-        .expect("can not parse num of bytes");
-    let interval: f32 = args
-        .value_of("interval")
-        .unwrap_or("1.0")
-        .parse()
-        .expect("can not parse interval");
-    let buf_size: u32 = args
-        .value_of("buf_size")
-        .unwrap_or("65536")
-        .parse()
-        .expect("can not parse buffer size");
+fn exec_transfer (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
 
     println!("transfer args parsed.");
 
@@ -156,10 +122,10 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
     //     TransferClient(manager, this, sock, amount, interval, sz);
     // client.start();
 
-    // share with multiple socks
-    let mut sock = Socket::new(local_addr, task_sender.clone(), &ret_channel_recv);
-    sock.bind(local_port).expect("Can not bind local port!");
-    sock.connect(dest_addr, dest_port).expect("Can not establish connection.");
+
+    let mut sock = Socket::new(args.local_addr, task_sender.clone(), &ret_channel_recv);
+    sock.bind(args.local_port).expect("Can not bind local port!");
+    sock.connect(args.dest_addr, args.dest_port).expect("Can not establish connection.");
 
     // sleep to wait for other threads to do the job
     thread::sleep(time::Duration::from_secs(5));
@@ -181,22 +147,7 @@ fn exec_transfer (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_re
 //     servint: execution interval of the transfer server, default 1 second
 //     workint: execution interval of the transfer worker, default 1 second
 //     sz: buffer size of the transfer worker, default 65536
-fn exec_server (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
-    let local_addr: String = args
-        .value_of("local_addr")
-        .unwrap_or("127.0.0.1")
-        .parse()
-        .expect("can not parse local addr");
-    let local_port: u8 = args
-        .value_of("local_port")
-        .unwrap_or("88")
-        .parse()
-        .expect("can not parse local port");
-    let backlog: u32 = args
-        .value_of("backlog")
-        .unwrap_or("16")
-        .parse()
-        .expect("can not parse backlog");
+fn exec_server (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
     
     println!("server args parsed.");
 
@@ -210,12 +161,87 @@ fn exec_server (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv
     // server.start();
 
 
-    let mut sock = Socket::new(local_addr, task_sender.clone(), &ret_channel_recv);
-    sock.bind(local_port).expect("Can not bind local port!");
-    sock.listen(backlog).expect("Can not listen to port!");
+    let mut sock = Socket::new(args.local_addr, task_sender.clone(), &ret_channel_recv);
+    sock.bind(args.local_port).expect("Can not bind local port!");
+    sock.listen(args.backlog).expect("Can not listen to port!");
 
+    // sleep to wait for other threads to do the job
+    thread::sleep(time::Duration::from_secs(10));
 }
 
-fn exec_local_test (args: ArgMatches, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
-    println!("It is not finished.");
+fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
+    println!("Local Test started ...");
+    // start server socket
+    let mut server_sock = Socket::new(args.local_addr.clone(), task_sender.clone(), &ret_channel_recv);
+    server_sock.bind(args.local_port).expect("Can not bind local port!");
+    server_sock.listen(args.backlog).expect("Can not listen to port!");
+
+    let mut client_sock = Socket::new(args.local_addr.clone(), task_sender.clone(), &ret_channel_recv);
+    client_sock.bind(args.local_port + 1).expect("Can not bind local port!");
+    client_sock.connect(args.local_addr, args.local_port).expect("Can not establish connection.");
+
+    // sleep to wait for other threads to do the job
+    thread::sleep(time::Duration::from_secs(10));
+}
+
+#[derive(Default)]
+struct NodeArgs {
+    // for client
+    dest_addr: String,
+    dest_port: u8,
+    local_addr: String,
+    local_port: u8,
+    byte_num: u32,
+    interval: f32,
+    /// buf size of node apps 
+    buf_size: u32,
+    backlog: u32,
+}
+
+fn parse_args (arg_matches: ArgMatches) -> NodeArgs {
+    let mut args = NodeArgs::default();
+
+    args.dest_addr = arg_matches
+        .value_of("dest_addr")
+        .unwrap_or("127.0.0.1")
+        .parse()
+        .expect("can not parse dest addr");
+    args.dest_port = arg_matches
+        .value_of("dest_port")
+        .unwrap_or("88")
+        .parse()
+        .expect("can not parse dest port");
+    args.local_port = arg_matches
+        .value_of("local_port")
+        .unwrap_or("88")
+        .parse()
+        .expect("can not parse local port");
+    args.local_addr = arg_matches
+        .value_of("local_addr")
+        .unwrap_or("127.0.0.1")
+        .parse()
+        .expect("can not parse local addr");
+    args.byte_num = arg_matches
+        .value_of("num_byte")
+        .unwrap_or("1024")
+        .parse()
+        .expect("can not parse num of bytes");
+    args.interval = arg_matches
+        .value_of("interval")
+        .unwrap_or("1.0")
+        .parse()
+        .expect("can not parse interval");
+    args.buf_size = arg_matches
+        .value_of("buf_size")
+        .unwrap_or("65536")
+        .parse()
+        .expect("can not parse buffer size");
+    // for server
+    args.backlog = arg_matches
+        .value_of("backlog")
+        .unwrap_or("16")
+        .parse()
+        .expect("can not parse backlog");
+
+    return args;
 }

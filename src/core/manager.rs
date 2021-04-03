@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::{HashMap, VecDeque}, sync::mpsc::{self, Receiver, SendError, Sender}, usize};
+use std::{collections::{HashMap, VecDeque}, sync::mpsc::{self, Receiver, SendError, Sender}, net::Ipv4Addr, usize};
 use super::{socket::{SocketID, SocketState, Socket}, udp_utils::PacketCmd};
 use super::packet::{TransportPacket, TransType};
 use super::udp_utils;
@@ -11,7 +11,7 @@ struct SocketContents {
     recv_buf: Option<VecDeque<u8>>,
     ret_sender: Sender<TaskRet>,
     // for server socket
-    backlog_que: Option<VecDeque<SocketID>>, // what should we store here?
+    backlog_que: Option<VecDeque<Socket>>, // what should we store here?
 }
 
 impl SocketContents {
@@ -97,7 +97,7 @@ impl SocketManager {
      * Start this TCP manager
      * the entry point of manager thread
      */
-    pub fn start(mut self) {
+    pub fn start(&mut self) {
 
         // handle tasks
         loop {
@@ -204,14 +204,45 @@ impl SocketManager {
     fn handle_receive (&mut self, packet: TransportPacket) {
         println!("OnReceive(): Got a new packet!");
         let sock_id = packet.get_sock_id();
-        let sock_content = self.socket_map.remove(&sock_id).expect("Can not find socket in map!");
+        let sock_content_ref: &mut SocketContents = 
+            // try normal socket first
+            if let Some(content) = self.socket_map.get_mut(&sock_id) {
+                content
+            } else {
+                // try server socket
+                let mut server_sock_id =  sock_id.clone();
+                server_sock_id.remote_addr = Ipv4Addr::new(0, 0, 0, 0);
+                server_sock_id.remote_port = 0;
+                self.socket_map.get_mut(&server_sock_id).expect("Can not find socket in map!")
+            };
 
         match packet.get_type() {
             TransType::SYN => {
                 println!("OnReceive(): Got a SYN packet!");
-                if let SocketState::LISTEN = sock_content.state{
-
-                }
+                // TODO: what if we got a retransmited SYN? -> just update the socket list?
+                if let SocketState::LISTEN = sock_content_ref.state{
+                    // Send ACK for SYN
+                    self.udp_send.send(PacketCmd::ACK(sock_id.clone(), Self::BuffferCap as u32, packet.get_seq_num())).unwrap();
+                    
+                    // init a new socket for the incoming connection
+                    // 1. new socket content
+                    let (ret_send, ret_recv) =  mpsc::channel::<TaskRet>();
+                    let mut new_sock_content = SocketContents::new(ret_send);
+                    new_sock_content.state = SocketState::ESTABLISHED;
+                    new_sock_content.recv_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
+                    let new_sock = Socket::new_coonection(sock_id.clone(), self.task_send.clone(), ret_recv);
+                    // 2. push socket API into the queue
+                    let backlog_que_ref = &mut sock_content_ref.backlog_que;
+                    backlog_que_ref.as_mut().unwrap().push_back(new_sock);
+                    // 3. push new socket to map
+                    println!("OnReceive(): New socket pushed to backlog!");
+                    self.socket_map.insert(sock_id.clone(), new_sock_content);
+                    
+                    // do not need to put back server socket, since we use ref
+                } else {
+                    // SYN arrived at a wrong time
+                    // do nothing...
+                } 
             }
             _ => {
                 println!("OnReceive(): Undefined packet type!");

@@ -142,4 +142,8 @@ impl TransportPacket {
         self.t_type.clone()
     }
 
+    pub fn get_seq_num (&self) -> u32 {
+        self.seq_num.clone()
+    }
+
 }
