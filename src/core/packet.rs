@@ -147,7 +147,12 @@ impl TransportPacket {
     }
 
     pub fn get_payload_len (&self) -> u32 {
-        self.payload.as_ref().unwrap().len() as u32
+        let load = self.payload.as_ref();
+        if load.is_none() {
+            0 as u32
+        } else {
+            load.unwrap().len() as u32
+        }
     }
 
     pub fn get_payload (&self) -> &Vec<u8> {

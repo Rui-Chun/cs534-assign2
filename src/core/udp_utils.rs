@@ -1,13 +1,16 @@
 use core::panic;
 use std::{collections::VecDeque, net::Ipv4Addr, sync::{Arc, Mutex, mpsc::{Receiver, Sender}}, thread, usize};
 use std::net::{UdpSocket, IpAddr};
+use rand::Rng;
 
 use super::{packet::{TransType, TransportPacket}, socket::SocketID};
 use super::manager::TaskMsg;
 
 const UDP_IN_PORT: usize = 8848;
 const UDP_OUT_PORT: usize = 8888;
+const SIM_LOSS_RATE: f64 = 0.05;
 // the manager sends the packet commands to the udp thread
+#[derive(Clone)]
 pub enum PacketCmd {
     SYN(SocketID, u32), // (sock_id)
     /// (sock_id, seq_num)
@@ -102,6 +105,7 @@ fn out_loop (cmd_recv: Receiver<PacketCmd>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
 // the udp dispatcher can call manager to handler received packets
 fn in_loop (task_send: Sender<TaskMsg>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
     // we only monitor one in-coming address for now...
+    let mut rng = rand::thread_rng();
     let socket = UdpSocket::bind(format!("{}:{}", *udp_in_addr.lock().unwrap(), UDP_IN_PORT)).unwrap();
     loop {
         let mut in_buf = [0; 2048];
@@ -115,7 +119,13 @@ fn in_loop (task_send: Sender<TaskMsg>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
         } else {
             panic!("can not parse ipv4 addr!");
         }
-        task_send.send(TaskMsg::OnReceive(packet)).unwrap();
+
+        // we will loss some packets
+        if rng.gen::<f64>() > SIM_LOSS_RATE {
+            task_send.send(TaskMsg::OnReceive(packet)).unwrap();
+        } else {
+            println!("UDP IN Loop: A packet is droped!");
+        }
     }
 
 }

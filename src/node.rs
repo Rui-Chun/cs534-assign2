@@ -196,7 +196,7 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
         println!("Len = {} wrote ", test_data);
 
         // wait
-        thread::sleep(time::Duration::from_millis(10));
+        thread::sleep(time::Duration::from_millis(100));
 
         let recv_data = server_recv.read(200).unwrap();
 

@@ -8,13 +8,12 @@ use super::manager::TaskMsg;
 
 type TimeoutCallback = TaskMsg;
 pub enum TimerCmd {
-    New(time::Instant, time::Duration, TimeoutCallback),
+    New(time::Instant, TimeoutCallback),
     Cancel(TimerToken),
 
 }
 struct TimerEntry {
-    instant: time::Instant,
-    time_lim: time::Duration,
+    time_lim: time::Instant,
     callback: TimeoutCallback,
 }
 
@@ -25,7 +24,7 @@ pub struct Timer {
     cmd_recv: Receiver<TimerCmd>,
     token_send: Sender<TimerToken>,
     task_send: Sender<TaskMsg>,
-    token_base: u32,
+    token_base: TimerToken,
 }
 
 impl Timer {
@@ -50,10 +49,10 @@ impl Timer {
             if let Ok(t_cmd) = self.cmd_recv.try_recv() {
                 // parse the cmd
                 match t_cmd {
-                    TimerCmd::New(instant, duration, callback) => {
+                    TimerCmd::New(time_lim, callback) => {
                         let new_token = self.token_base;
                         self.token_base += 1;
-                        self.timer_list.insert(new_token, TimerEntry{instant, time_lim: duration, callback});
+                        self.timer_list.insert(new_token, TimerEntry{time_lim, callback});
                         self.token_send.send(new_token).unwrap();
                     },
                     TimerCmd::Cancel(token) => {
@@ -71,7 +70,7 @@ impl Timer {
         let now = time::Instant::now();
         let mut time_outs = Vec::<TimerToken>::new();
         for (t_token, t_entry) in &mut self.timer_list {
-            if now < t_entry.instant + t_entry.time_lim {
+            if now > t_entry.time_lim {
                 // we got a time out
                 time_outs.push(t_token.to_owned());
                 // send callback
