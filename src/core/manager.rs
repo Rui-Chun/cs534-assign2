@@ -1,5 +1,5 @@
 use core::panic;
-use std::{cmp::{self, min}, collections::{HashMap, VecDeque}, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, u32, usize, vec};
+use std::{cmp, collections::{HashMap, VecDeque}, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, u32, usize};
 use super::{socket::{SocketID, SocketState, Socket}, udp_utils::PacketCmd};
 use super::packet::{self, TransportPacket, TransType};
 use super::udp_utils;
@@ -35,8 +35,8 @@ impl SocketContents {
     pub fn new (ret_sender: Sender<TaskRet>) -> Self {
         SocketContents {
             state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender, backlog_que: None,
-            send_base:0, send_next:0, send_wind: SocketManager::BuffferCap as u32, 
-            recv_base:0, recv_next:0, recv_wind: SocketManager::BuffferCap as u32
+            send_base:0, send_next:0, send_wind: SocketManager::BUFFER_CAP as u32, 
+            recv_base:0, recv_next:0, recv_wind: SocketManager::BUFFER_CAP as u32
         }
     }
 
@@ -64,6 +64,9 @@ pub enum TaskMsg {
     Write(SocketID, Vec<u8>, u32, u32),
     /// (sock_id, len)
     Read(SocketID, u32),
+    /// (sock_id)
+    Close(SocketID),
+    Release(SocketID),
 
     // ==== UDP packets related
     // a new packet is received
@@ -96,7 +99,7 @@ pub struct SocketManager {
 }
 
 impl SocketManager {
-    const BuffferCap: usize = 1 << 12; // how many bytes the buffer can hold
+    const BUFFER_CAP: usize = 1 << 12; // how many bytes the buffer can hold
 
     pub fn new () -> (Self, Sender<TaskMsg>, Receiver<Receiver<TaskRet>>) {
         // the channel to send tasks of sockets
@@ -210,7 +213,7 @@ impl SocketManager {
                         // TODO: Setup timer for ACK timeout!
     
                         sock_content.state = SocketState::SYN_SENT;
-                        sock_content.send_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
+                        sock_content.send_buf = Some(VecDeque::with_capacity(Self::BUFFER_CAP));
                         // set up the window
                         sock_content.send_base = seq_num;
                         sock_content.send_next = seq_num + 1;
@@ -231,9 +234,13 @@ impl SocketManager {
 
                 TaskMsg::Write(sock_id, buf, pos, len) => self.handle_write(sock_id, buf, pos, len),
 
-                TaskMsg::SendNow(sock_id, seq_num, len) => self.handle_sendnow(sock_id, seq_num, len),
-
                 TaskMsg::Read(sock_id, len) => self.handle_read(sock_id, len),
+
+                TaskMsg::Close(sock_id) => self.handle_close(sock_id),
+
+                TaskMsg::Release(sock_id) => self.handle_release(sock_id),
+
+                TaskMsg::SendNow(sock_id, seq_num, len) => self.handle_sendnow(sock_id, seq_num, len),
                 
                 TaskMsg::OnReceive(packet) => self.handle_receive(packet),
 
@@ -322,6 +329,77 @@ impl SocketManager {
     }
 
     /// handler function when a packet is received.
+    // the socke will stay open until all data are sent
+    fn handle_close (&mut self, sock_id: SocketID) {
+        let sock_content = self.socket_map.get_mut(&sock_id);
+
+        if sock_content.is_none() {
+            // it has been closeds
+            return;
+        }
+
+        let sock_content = sock_content.unwrap();
+        // find out this is a socket or client socket.
+        match sock_content.state {
+            SocketState::LISTEN => {
+                // if a server listen socket, just free all resources.
+                self.socket_map.remove(&sock_id).unwrap();
+            }
+            // we only need to send FIN, if a connection is established.
+            SocketState::ESTABLISHED => {
+                if sock_content.send_buf.is_some() {
+                    // if it is a client send socket
+                    // 1. send all the remaining data in the buf
+                    // given current task queue design, the SendNow task will always execute before Close.
+                    // So we do not need any processing.
+                    // TODO: things get different with flow control ...
+
+                    // 2. check whether all data are acked
+                    if sock_content.send_base == sock_content.send_next {
+                        // send FIN and get into FIN_SENT
+                        self.udp_send.send(PacketCmd::FIN(sock_id, sock_content.send_next)).unwrap();
+                        sock_content.state = SocketState::FIN_SENT;
+
+                        // 3. set up a retransmit timer.
+                        // TODO: timer
+                    } else {
+                        // get into FIN_WAIT, wait for retransmission and ack
+                        sock_content.state = SocketState::FIN_WAIT;
+                    }
+
+                } 
+                else if sock_content.recv_buf.is_some() {
+                    // if it is server recv socket
+
+                    // 1. send FIN, get into FIN_SENT state.
+                    self.udp_send.send(PacketCmd::FIN(sock_id, sock_content.send_next)).unwrap();
+                    sock_content.state = SocketState::FIN_SENT;
+
+                    // 2. set up a retransmit timer.
+                    // TODO: timer
+                }
+                else {
+                    // an undefined socket
+                    panic!("trying to close a undefined socket!");
+                }
+            }
+            SocketState::SHUTDOWN => {
+                self.socket_map.remove(&sock_id).unwrap();
+            }
+            _ => {
+                self.socket_map.remove(&sock_id).unwrap();
+            }
+        }
+
+    }
+
+    /// handler for release task
+    fn handle_release (&mut self, sock_id: SocketID) {
+        // release should only free the resources and change state to closed or delete it?
+        self.socket_map.remove(&sock_id);
+    }
+
+    /// handler function when a packet is received.
     // when ACK is recevied , the data in buf will be sent. The window slides.
     fn handle_receive (&mut self, packet: TransportPacket) {
         println!("OnReceive(): Got a new packet!");
@@ -336,6 +414,7 @@ impl SocketManager {
                 server_sock_id.remote_addr = Ipv4Addr::new(0, 0, 0, 0);
                 server_sock_id.remote_port = 0;
                 self.socket_map.get_mut(&server_sock_id).expect("Can not find socket in map!")
+                // TODO: we should send back FIN to indicate that connection is refused.
             };
 
         match packet.get_type() {
@@ -347,14 +426,14 @@ impl SocketManager {
                 //    and since its state is not listen, nothing happens.
                 if let SocketState::LISTEN = sock_content_ref.state{
                     // Send ACK for SYN
-                    self.udp_send.send(PacketCmd::ACK(sock_id.clone(), Self::BuffferCap as u32, packet.get_seq_num()+1)).unwrap();
+                    self.udp_send.send(PacketCmd::ACK(sock_id.clone(), Self::BUFFER_CAP as u32, packet.get_seq_num()+1)).unwrap();
                     
                     // init a new socket for the incoming connection
                     // 1. new socket content
                     let (ret_send, ret_recv) =  mpsc::channel::<TaskRet>();
                     let mut new_sock_content = SocketContents::new(ret_send);
                     new_sock_content.state = SocketState::ESTABLISHED;
-                    new_sock_content.recv_buf = Some(VecDeque::with_capacity(Self::BuffferCap));
+                    new_sock_content.recv_buf = Some(VecDeque::with_capacity(Self::BUFFER_CAP));
                     // set up window
                     new_sock_content.recv_base = packet.get_seq_num()+1;
                     new_sock_content.recv_next = packet.get_seq_num()+1;
@@ -378,6 +457,8 @@ impl SocketManager {
                 println!("OnReceive(): Got a ACK packet!");
                 match sock_content_ref.state {
                     SocketState::SYN_SENT => {
+                        // check seq_num
+                        assert_eq!(packet.get_seq_num(), sock_content_ref.send_base + 1);
                         // switch established state
                         sock_content_ref.state = SocketState::ESTABLISHED;
                         // move the window
@@ -386,9 +467,42 @@ impl SocketManager {
                         println!("OnReceive(): New connection established!");
                     }
                     SocketState::ESTABLISHED => {
+                        // check that we have a send buf
+                        assert!(sock_content_ref.send_buf.is_some());
+
+                        // delete data in buf
+                        let to_drain = packet.get_seq_num() - sock_content_ref.send_base;
+                        sock_content_ref.send_buf.as_mut().unwrap().drain(0..to_drain as usize);
                         // move the window
                         sock_content_ref.send_base = packet.get_seq_num();
+                        assert_eq!(sock_content_ref.send_buf.as_ref().unwrap().len() as u32, sock_content_ref.send_next - sock_content_ref.send_base);
+
                         assert!(sock_content_ref.send_base <= sock_content_ref.send_next);
+                    }
+                    SocketState::FIN_WAIT => {
+                        // check that we have a send buf
+                        assert!(sock_content_ref.send_buf.is_some());
+
+                        // check seq_num
+                        if packet.get_seq_num() == sock_content_ref.send_next {
+                            // we are good to close now.
+                            // send FIN, get into FIN_SENT state.
+                            self.udp_send.send(PacketCmd::FIN(sock_id, sock_content_ref.send_next)).unwrap();
+                            sock_content_ref.state = SocketState::FIN_SENT;
+                        } else {
+                            // delete data in buf
+                            let to_drain = packet.get_seq_num() - sock_content_ref.send_base;
+                            sock_content_ref.send_buf.as_mut().unwrap().drain(0..to_drain as usize);
+                            // move the window
+                            sock_content_ref.send_base = packet.get_seq_num();
+                            assert_eq!(sock_content_ref.send_buf.as_ref().unwrap().len() as u32, sock_content_ref.send_next - sock_content_ref.send_base);
+                            assert!(sock_content_ref.send_base <= sock_content_ref.send_next);
+                        }
+                    }
+                    SocketState::FIN_SENT => {
+                        println!("ACK received, Socket is destroied.");
+                        // all done, connection is closed.
+                        self.socket_map.remove(&sock_id);
                     }
                     _ => {
                         println!("This state is not handled yet.")
@@ -399,20 +513,64 @@ impl SocketManager {
             TransType::DATA => {
                 println!("OnReceive(): Got a DATA packet!");
                 if let SocketState::ESTABLISHED = sock_content_ref.state {
-                    let buf_left = sock_content_ref.recv_wind - sock_content_ref.recv_next + sock_content_ref.recv_base;
-                    let to_recv = cmp::min(buf_left, packet.get_payload_len());
+                    // First, check the seq_num to see whether a packet is lost.
+                    if packet.get_seq_num() == sock_content_ref.recv_next {
+                        // copy as many as we can, discard the rest.
+                        let buf_left =  sock_content_ref.recv_wind - (sock_content_ref.recv_next - sock_content_ref.recv_base);
+                        let to_recv = cmp::min(buf_left, packet.get_payload_len());
 
-                    // copy to recv buf
-                    sock_content_ref.recv_buf.as_mut().unwrap().extend(packet.get_payload()[..to_recv as usize].iter());
-                    sock_content_ref.recv_next += to_recv;
-                    assert!(sock_content_ref.recv_next - sock_content_ref.recv_base <= sock_content_ref.recv_wind);
-                    assert!(sock_content_ref.recv_next - sock_content_ref.recv_base == sock_content_ref.recv_buf.as_ref().unwrap().len() as u32);
+                        // copy to recv buf
+                        sock_content_ref.recv_buf.as_mut().unwrap().extend(packet.get_payload()[..to_recv as usize].iter());
+                        sock_content_ref.recv_next += to_recv;
 
+                        // make sure the buf is behaving correctly.
+                        assert!(sock_content_ref.recv_next - sock_content_ref.recv_base <= sock_content_ref.recv_wind);
+                        assert!(sock_content_ref.recv_next - sock_content_ref.recv_base == sock_content_ref.recv_buf.as_ref().unwrap().len() as u32);
+
+                        // send ACK for DATA packet !
+                        let wind_left = sock_content_ref.recv_wind + sock_content_ref.recv_base - sock_content_ref.recv_next;
+                        self.udp_send.send(PacketCmd::ACK(sock_id, wind_left, sock_content_ref.recv_next)).unwrap();
+                    }
+                    // if seq_num is not continuous
+                    else {
+                        // we do not take that data ...
+                        // send ACK for DATA packet !
+                        let wind_left = sock_content_ref.recv_wind + sock_content_ref.recv_base - sock_content_ref.recv_next;
+                        self.udp_send.send(PacketCmd::ACK(sock_id, wind_left, sock_content_ref.recv_next)).unwrap();
+                    }
+
+                } else if let SocketState::FIN_SENT = sock_content_ref.state {
+                    // we do nothing, refuse to provide any service as a server.
+                    println!("No ACK since I am in FIN_SENT.");
                 } else {
                     panic!("Wrong state, should not receive data packet!");
                 }
             }
+            TransType::FIN => {
+                println!("OnReceive(): Got a FIN packet!");
+                if let SocketState::ESTABLISHED = sock_content_ref.state {
+                    // if it is a client socket
+                    if sock_content_ref.send_buf.is_some() {
+                        // close immediately, the server just hang up.
+                        sock_content_ref.state = SocketState::CLOSED;
+                        sock_content_ref.send_buf = None;
+                        sock_content_ref.send_base = 0;
+                        sock_content_ref.send_next = 0;
 
+                        // send ACK
+                        self.udp_send.send(PacketCmd::ACK(sock_id, 0, packet.get_seq_num() + 1)).unwrap();
+                    }
+                    else if sock_content_ref.recv_buf.is_some() {
+                        // the connection is closed, but user can still read buf.
+                        sock_content_ref.state = SocketState::SHUTDOWN;
+                        // send ACK
+                        self.udp_send.send(PacketCmd::ACK(sock_id, 0, packet.get_seq_num() + 1)).unwrap();
+                    }
+
+                } else {
+                    panic!("Wrong state, should not receive FIN packet!");
+                }
+            }
             _ => {
                 println!("OnReceive(): Undefined packet type!");
             }

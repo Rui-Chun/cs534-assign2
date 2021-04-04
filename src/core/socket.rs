@@ -1,19 +1,24 @@
 use core::panic;
 use std::{hash::Hash, net::Ipv4Addr, usize};
 use std::sync::mpsc::{Sender, Receiver};
-use std::sync::{Arc, Mutex};
 
 use super::manager::{TaskMsg, TaskRet};
 
 // TCP socket states
 #[derive(PartialEq)]
+#[allow(non_camel_case_types)]
+/// transport socket states
 pub enum SocketState {
-    // protocol states
     CLOSED,
     LISTEN,
     SYN_SENT,
     ESTABLISHED,
-    SHUTDOWN // close requested, FIN not sent (due to unsent data in queue)
+    /// We need to close, but still work to do.
+    SHUTDOWN,
+    /// wait for all the packets to be acked, so that we can send FIN
+    FIN_WAIT,
+    /// a FIN has been sent
+    FIN_SENT,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -144,14 +149,18 @@ impl Socket {
 
     /**
      * Initiate closure of a connection (graceful shutdown)
+     * it will consume the socket.
      */
-    pub fn close() {
+    pub fn close(self) {
+        self.task_sender.send(TaskMsg::Close(self.id)).unwrap();
     }
 
     /**
      * Release a connection immediately (abortive shutdown)
+     * it will consume the socket.
      */
-    pub fn release() {
+    pub fn release(self) {
+        self.task_sender.send(TaskMsg::Release(self.id)).unwrap();
     }
 
     /**

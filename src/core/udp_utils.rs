@@ -10,8 +10,11 @@ const UDP_OUT_PORT: usize = 8888;
 // the manager sends the packet commands to the udp thread
 pub enum PacketCmd {
     SYN(SocketID, u32), // (sock_id)
-    FIN(SocketID),
-    ACK(SocketID, u32, u32), // (sock_id, window, seq_num)
+    /// (sock_id, seq_num)
+    FIN(SocketID, u32),
+    /// (sock_id, window, seq_num)
+    ACK(SocketID, u32, u32),
+    /// (sock_id, seq_num, payload)
     DATA(SocketID, u32, Vec<u8>),
 }
 
@@ -70,6 +73,18 @@ fn out_loop (cmd_recv: Receiver<PacketCmd>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
                 // with window and seq_num, no payload
                 let packet = TransportPacket::new(id.local_port, id.remote_port, 
                                                                   TransType::DATA, 0, seq_num, Some(data));
+                let out_buf = packet.pack();
+                let amt = socket.send_to(&out_buf, format!("{}:{}", id.remote_addr, UDP_IN_PORT)).unwrap();
+                if amt != out_buf.len() {
+                    panic!("Can not send complete packet!");
+                }
+            }
+            PacketCmd::FIN(id, seq_num) => {
+                println!("UDP: FIN sending...");
+                let socket = UdpSocket::bind(format!("{}:{}", id.local_addr, UDP_OUT_PORT)).unwrap();
+                // no window, seq_num, no payload
+                let packet = TransportPacket::new(id.local_port, id.remote_port, 
+                                                                  TransType::FIN, 0, seq_num, None);
                 let out_buf = packet.pack();
                 let amt = socket.send_to(&out_buf, format!("{}:{}", id.remote_addr, UDP_IN_PORT)).unwrap();
                 if amt != out_buf.len() {
