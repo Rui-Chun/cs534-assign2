@@ -115,6 +115,7 @@ impl SocketManager {
     const BUFFER_CAP: usize = 1 << 12; // how many bytes the buffer can hold
     const RTT_RATIO: f64 = 0.9; // the exp update ratio of rtt
     const TIMEOUT_MULTI: u32 = 3; // timeout  = multi * rtt
+    const RTT_LOW_BOUND: u64 = 5; // ms
 
     pub fn new () -> (Self, Sender<TaskMsg>, Receiver<Receiver<TaskRet>>) {
         // ===== init channels for inter thread comm =====
@@ -456,10 +457,27 @@ impl SocketManager {
     fn handle_retransmit (&mut self, sock_id: SocketID, ttype: TransType, mut seq_num: u32, mut len: u32) {
         println!("Retransmit() is called!!!");
         let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
+
         // check whether retrans is still needed
         if sock_content.send_base > seq_num {
             return;
         }
+
+        // if retransmit SYN
+        if let TransType::SYN = ttype {
+            self.udp_send.send(PacketCmd::SYN(sock_id.clone(), seq_num)).unwrap();
+
+            assert!(seq_num == sock_content.send_base);
+            println!("In retransmit SYN, timer is updated.");
+            self.timer_send.send(TimerCmd::New(
+                Instant::now()+sock_content.rtt * Self::TIMEOUT_MULTI, 
+                TaskMsg::ReTransmit(sock_id.clone(), ttype.clone(), seq_num, len)
+            )).unwrap();
+            let ttoken = self.ttoken_recv.recv().unwrap();
+            sock_content.packet_times.insert(seq_num, (Instant::now(), Some(ttoken)));
+        }
+
+        // TODO: Still need to handle FIN resend ====== !!!!
 
         // send data
         // send packets until done
@@ -469,7 +487,7 @@ impl SocketManager {
             let start_index = (seq_num - sock_content.send_base) as usize;
             let data = Vec::from(&data[start_index..start_index+to_send]);
 
-            // !!! must match ttype
+            
             self.udp_send.send(PacketCmd::DATA(sock_id.clone(), seq_num, data)).unwrap();
 
             // record packet trans time
@@ -585,6 +603,9 @@ impl SocketManager {
                             }
                             let now = Instant::now();
                             sock_content_ref.rtt =  sock_content_ref.rtt.mul_f64(Self::RTT_RATIO) + (now - time_entry.0).mul_f64(1.0 - Self::RTT_RATIO);
+                            if sock_content_ref.rtt < Duration::from_millis(Self::RTT_LOW_BOUND) {
+                                sock_content_ref.rtt = Duration::from_millis(Self::RTT_LOW_BOUND);
+                            }
                         }
                     }
                     SocketState::ESTABLISHED => {
@@ -608,16 +629,14 @@ impl SocketManager {
                             }
                             let now = Instant::now();
                             sock_content_ref.rtt =  sock_content_ref.rtt.mul_f64(Self::RTT_RATIO) + (now - time_entry.0).mul_f64(1.0 - Self::RTT_RATIO);
+                            if sock_content_ref.rtt < Duration::from_millis(Self::RTT_LOW_BOUND) {
+                                sock_content_ref.rtt = Duration::from_millis(Self::RTT_LOW_BOUND);
+                            }
                         }
                         // update retrans timer, if we have data in buf left unacked
                         if sock_content_ref.send_base < sock_content_ref.send_next {
-                            let new_time_entry_opt = sock_content_ref.packet_times.remove(&sock_content_ref.send_base);
-                            let mut new_time_entry = (Instant::now(), None);
-                            if new_time_entry_opt.is_none() {
-                                println!("Here");
-                            } else {
-                                new_time_entry = new_time_entry_opt.unwrap();
-                            }
+                            let new_time_entry = sock_content_ref.packet_times.remove(&sock_content_ref.send_base).unwrap();
+
                             assert!(new_time_entry.1.is_none());
                             self.timer_send.send(TimerCmd::New(
                                 new_time_entry.0 + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 

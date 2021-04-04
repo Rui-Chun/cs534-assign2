@@ -181,7 +181,7 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     client_sock.connect(args.local_addr, args.local_port).expect("Can not establish connection.");
 
     // wait for the connection to be established
-    thread::sleep(time::Duration::from_millis(10));
+    thread::sleep(time::Duration::from_millis(100));
 
     // the receiving socket at server
     let server_recv =  server_sock.accept().expect("Can not get connection!");
@@ -216,7 +216,7 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     }
 
     // wait
-    thread::sleep(time::Duration::from_millis(10));
+    thread::sleep(time::Duration::from_millis(200));
 
     for _ in 0..10 {
         let recv_data = server_recv.read(200).unwrap();
