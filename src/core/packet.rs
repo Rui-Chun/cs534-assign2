@@ -54,7 +54,7 @@ pub struct TransportPacket {
 
 impl TransportPacket {
     const HEADER_SIZE: usize = 12;
-    const MAX_PACKET_SIZE: usize = 256; // we use only one byte for packet length (fishnet only has 128 bytes max len)
+    const MAX_PACKET_SIZE: usize = 255; // we use only one byte for packet length (fishnet only has 128 bytes max len)
     pub const MAX_PAYLOAD_SIZE: usize = TransportPacket::MAX_PACKET_SIZE - TransportPacket::HEADER_SIZE;
 
     /// for sending packet, init with specific values

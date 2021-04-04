@@ -534,10 +534,18 @@ impl SocketManager {
         // check seq_num, discard the packet if seq_num is out of range
         if sock_content_ref.send_buf.is_some() {
             if packet.get_seq_num() < sock_content_ref.send_base {
+                // useless ACK
+                println!("OnReceive(): Discard a new packet for send buf!");
                 return;
             }
         } else if sock_content_ref.recv_buf.is_some() {
             if packet.get_seq_num() < sock_content_ref.recv_next {
+                // useless retransmission, we had a ACK lost.
+                println!("OnReceive(): Discard a new packet for recv buf!");
+                // need to resend the ACK
+                // send ACK for DATA packet !
+                let wind_left = sock_content_ref.recv_wind + sock_content_ref.recv_base - sock_content_ref.recv_next;
+                self.udp_send.send(PacketCmd::ACK(sock_id, wind_left, sock_content_ref.recv_next)).unwrap();
                 return;
             }
         }
