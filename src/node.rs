@@ -77,7 +77,7 @@ fn main() {
     // get exec type
     let command: String = arg_matches
         .value_of("exec_type")
-        .unwrap_or("local_test")
+        .unwrap_or("window_test")
         .parse()
         .expect("can not parse exec type");
 
@@ -92,6 +92,9 @@ fn main() {
         },
         "local_test" => {
             exec_local_test(args, task_sender, ret_channel_recv);
+        },
+        "window_test" => {
+            exec_window_test(args, task_sender, ret_channel_recv);
         }
         _ => {println!("Undefined exec command!");}
     }
@@ -206,7 +209,7 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     }
 
     // send and recv test
-    for _ in 0..10 {
+    for _ in 0..20 {
         let mut test_data = Vec::new();
         for i in 0..200 {
             test_data.push(i as u8);
@@ -218,8 +221,15 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     // wait
     thread::sleep(time::Duration::from_millis(200));
 
-    for _ in 0..10 {
-        let recv_data = server_recv.read(200).unwrap();
+    for _ in 0..20 {
+        let mut recv_data = Vec::new();
+        loop {
+            recv_data = server_recv.read(200).unwrap();
+            if recv_data.len() == 200 {
+                break;
+            }
+            thread::sleep(time::Duration::from_millis(10));
+        }
 
         for i in 0..200 {
             assert!(recv_data[i] == i as u8);
@@ -240,6 +250,70 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     thread::sleep(time::Duration::from_secs(10));
     
 }
+
+fn exec_window_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
+    println!("Window Test started ...");
+    // start server socket
+    let mut server_sock = Socket::new(args.local_addr.clone(), task_sender.clone(), &ret_channel_recv);
+    server_sock.bind(args.local_port).expect("Can not bind local port!");
+    server_sock.listen(args.backlog).expect("Can not listen to port!");
+
+    let mut client_sock = Socket::new(args.local_addr.clone(), task_sender.clone(), &ret_channel_recv);
+    client_sock.bind(args.local_port + 1).expect("Can not bind local port!");
+    client_sock.connect(args.local_addr, args.local_port).expect("Can not establish connection.");
+
+    // wait for the connection to be established
+    thread::sleep(time::Duration::from_millis(100));
+
+    // the receiving socket at server
+    let server_recv =  server_sock.accept().expect("Can not get connection!");
+
+    // flow control test
+    thread::spawn(move || {
+        for _ in 0..20 {
+            let mut test_data = Vec::new();
+            for i in 0..200 {
+                test_data.push(i as u8);
+            }
+            let test_data = client_sock.write(&test_data, 0, 200).unwrap();
+            println!("Len = {} wrote ", test_data);
+            // quick sender
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        thread::sleep(time::Duration::from_secs(10));
+        client_sock.close();
+    });
+
+    for _ in 0..20 {
+        let mut recv_data = Vec::new();
+        loop {
+            recv_data = server_recv.read(200).unwrap();
+            if recv_data.len() == 200 {
+                break;
+            }
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        // slow receiver!
+        thread::sleep(time::Duration::from_millis(200));
+
+        for i in 0..200 {
+            assert!(recv_data[i] == i as u8);
+        }
+    }
+
+    println!("All data right! \n");
+
+    server_recv.close(); // we do not support current FIN from both side.
+    server_sock.close();
+
+    // wait
+    thread::sleep(time::Duration::from_millis(10));
+
+    // sleep to wait for other threads to do the job
+    thread::sleep(time::Duration::from_secs(10));
+    
+}
+
 
 #[derive(Default)]
 struct NodeArgs {

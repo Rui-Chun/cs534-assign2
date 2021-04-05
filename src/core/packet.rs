@@ -159,4 +159,8 @@ impl TransportPacket {
         self.payload.as_ref().unwrap()
     }
 
+    pub fn get_wind (&self) -> u32 {
+        self.window.clone()
+    }
+
 }

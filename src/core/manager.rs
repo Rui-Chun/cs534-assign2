@@ -27,6 +27,11 @@ struct SocketContents {
     /// send window size
     send_wind: u32,
 
+    /// flow control, recv window left
+    send_flow_ctl: u32,
+    /// conjestion control 
+    send_cong_ctrl: u32,
+
     /// the start of bytes to be read by user
     recv_base: u32,
     // the start of bytes to be filled
@@ -49,6 +54,8 @@ impl SocketContents {
         SocketContents {
             state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender, backlog_que: None,
             send_base:0, send_next:0, send_wind: SocketManager::BUFFER_CAP as u32, 
+            send_flow_ctl: SocketManager::BUFFER_CAP as u32,
+            send_cong_ctrl: SocketManager::BUFFER_CAP as u32,
             recv_base:0, recv_next:0, recv_wind: SocketManager::BUFFER_CAP as u32,
             rtt: Duration::from_micros(2000), // 2 ms as the init value for time out
             packet_times: HashMap::new(),
@@ -349,6 +356,11 @@ impl SocketManager {
         sock_content.send_ret(TaskRet::Read(Ok( buf_read ))).unwrap();
 
         // move window
+        // if sock_content.recv_next - sock_content.recv_base == sock_content.recv_wind  && to_read > 0 {
+        //     // we must tell the client the newest window size !!
+        //     println!("recv buf full and read called.");
+        //     self.udp_send.send(PacketCmd::ACK(sock_id.clone(), to_read as u32, sock_content.recv_next)).unwrap();
+        // }
         sock_content.recv_base += to_read as u32;
         assert!(sock_content.recv_base <= sock_content.recv_next);
         assert!(sock_content.recv_next - sock_content.recv_base == sock_content.recv_buf.as_ref().unwrap().len() as u32);
@@ -378,12 +390,8 @@ impl SocketManager {
             SocketState::ESTABLISHED => {
                 // if it is a client send socket
                 if sock_content.send_buf.is_some() {
-                    // 1. send all the remaining data in the buf
-                    // given current task queue design, the SendNow task will always execute before Close.
-                    // So we do not need any processing.
-                    // TODO: things get different with flow control ...
 
-                    // 2. check whether all data are acked
+                    // check whether all data are acked
                     if sock_content.send_base == sock_content.send_next {
                         // send FIN and get into FIN_SENT
                         self.task_send.send(TaskMsg::SendNow(sock_id, TransType::FIN, sock_content.send_next, 0, false)).unwrap();
@@ -398,7 +406,7 @@ impl SocketManager {
                 else if sock_content.recv_buf.is_some() {
                     // if it is server recv socket
 
-                    // 1. send FIN, get into FIN_SENT state.
+                    // send FIN, get into FIN_SENT state.
                     self.task_send.send(TaskMsg::SendNow(sock_id, TransType::FIN, sock_content.recv_next, 0, false)).unwrap();
                     sock_content.state = SocketState::FIN_SENT;
                 }
@@ -461,7 +469,7 @@ impl SocketManager {
         if let TransType::FIN = ttype {
             self.udp_send.send(PacketCmd::FIN(sock_id.clone(), seq_num)).unwrap();
             sock_content.print_log(&sock_id, "F");
-            assert!(seq_num == sock_content.send_base);
+            assert!(seq_num == sock_content.send_base || seq_num == sock_content.recv_next);
             if retrans_flag {
                 println!("Retransmiting FIN !!!");
                 sock_content.print_log(&sock_id, "!");
@@ -482,6 +490,35 @@ impl SocketManager {
             // end of sending
             return;
         }
+
+        // Check all the windows
+        // how many bytes we can still send?
+        let cong_lim = sock_content.send_cong_ctrl as isize + sock_content.send_base as isize - seq_num as isize;
+        let win_left = cmp::min(sock_content.send_flow_ctl as isize, cong_lim);
+        // if window is not large enough
+        if win_left < len as isize {
+            let time_entry = sock_content.packet_times.remove(&seq_num);
+            // if it has been transmitted before
+            if time_entry.is_some() {
+                // update timer to transmit later
+                assert!(time_entry.unwrap().1.is_some());
+                self.timer_send.send(TimerCmd::New(
+                    Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
+                    TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
+                )).unwrap();
+                let ttoken = self.ttoken_recv.recv().unwrap();
+                sock_content.packet_times.insert(seq_num, (time_entry.unwrap().0, Some(ttoken)));
+            }
+            // if it is the first transmission, no time entry 
+            else {
+                self.timer_send.send(TimerCmd::New(
+                    Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
+                    TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
+                )).unwrap();
+            }
+            return;
+        }
+
 
         // to send data
         // send packets until done
@@ -610,9 +647,13 @@ impl SocketManager {
             }
             TransType::ACK => {
                 println!("OnReceive(): Got a ACK packet!");
+                // update flow control window
+                sock_content_ref.send_flow_ctl = packet.get_wind();
+                println!("New flow control window = {}", sock_content_ref.send_flow_ctl);
                 if sock_content_ref.send_buf.is_some() && packet.get_seq_num() == sock_content_ref.send_base {
                     // useless ack for client socket
                     // got an acknowledgement packet that 'does not' advances the acknowledgement field
+                    println!("A duplicate ACK !");
                     sock_content_ref.print_log(&sock_id, "?");
                     return;
                 }
@@ -670,21 +711,32 @@ impl SocketManager {
                         }
                         // update retrans timer, if we have data in buf left unacked
                         if sock_content_ref.send_base < sock_content_ref.send_next {
-                            let new_time_entry = sock_content_ref.packet_times.remove(&sock_content_ref.send_base).unwrap();
+                            // it may or may not has been transmitted
+                            let new_time_entry = sock_content_ref.packet_times.remove(&sock_content_ref.send_base);
+                            if new_time_entry.is_some() {
+                                assert!(new_time_entry.unwrap().1.is_none());
+                                // update timer
+                                self.timer_send.send(TimerCmd::New(
+                                    new_time_entry.unwrap().0 + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
+                                    TaskMsg::SendNow(
+                                        sock_id.clone(), TransType::DATA, sock_content_ref.send_base, 
+                                        sock_content_ref.send_next - sock_content_ref.send_base,
+                                        true
+                                    )
+                                )).unwrap();
+                                // put back the packet records!
+                                let ttoken = self.ttoken_recv.recv().unwrap();
+                                sock_content_ref.packet_times.insert(sock_content_ref.send_base, (new_time_entry.unwrap().0, Some(ttoken)));
+                            }
+                            // the new send base has not been sent before
+                            else {
+                                self.timer_send.send(TimerCmd::New(
+                                    Instant::now() + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
+                                    TaskMsg::SendNow(sock_id.clone(), TransType::DATA, 
+                                                     sock_content_ref.send_base, sock_content_ref.send_next - sock_content_ref.send_base, false)
+                                )).unwrap();
+                            }
 
-                            assert!(new_time_entry.1.is_none());
-                            // update timer
-                            self.timer_send.send(TimerCmd::New(
-                                new_time_entry.0 + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
-                                TaskMsg::SendNow(
-                                    sock_id.clone(), TransType::DATA, sock_content_ref.send_base, 
-                                    sock_content_ref.send_next - sock_content_ref.send_base,
-                                    true
-                                )
-                            )).unwrap();
-                            // put back the packet records!
-                            let ttoken = self.ttoken_recv.recv().unwrap();
-                            sock_content_ref.packet_times.insert(sock_content_ref.send_base, (new_time_entry.0, Some(ttoken)));
                         }
                     }
                     SocketState::FIN_WAIT => {
