@@ -1,10 +1,14 @@
 use core::{panic};
-use std::{cmp, collections::{HashMap, VecDeque}, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, thread, time::{Duration, Instant}, u32, usize};
+use std::{cmp, collections::{HashMap, VecDeque}, convert::TryInto, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, thread, time::{Duration, Instant}, u32, usize};
 use super::{socket::{SocketID, SocketState, Socket}, timer::{TimerCmd, TimerToken}, udp_utils::PacketCmd};
 use super::packet::{self, TransportPacket, TransType};
 use super::udp_utils;
 use super::timer;
 use rand::{Rng};
+
+use std::io::prelude::*;
+use std::fs::File;
+
 
 struct SocketContents {
     state: SocketState,
@@ -35,6 +39,9 @@ struct SocketContents {
     /// packet trans records
     /// seq_num -> (transmitting instance, (optinal) timer token)
     packet_times: HashMap<u32, (Instant, Option<TimerToken>)>,
+
+    /// the file name of the packet log file
+    log_file: Option<File>,
 }
 
 impl SocketContents {
@@ -45,12 +52,29 @@ impl SocketContents {
             recv_base:0, recv_next:0, recv_wind: SocketManager::BUFFER_CAP as u32,
             rtt: Duration::from_micros(2000), // 2 ms as the init value for time out
             packet_times: HashMap::new(),
+            log_file: None,
         }
     }
 
     pub fn send_ret (&self, ret: TaskRet) -> Result<(), SendError<TaskRet>> {
         self.ret_sender.send(ret)?;
         return Ok(())
+    }
+
+    pub fn print_log (&mut self, sock_id: &SocketID, ch: &'static str) {
+        if self.log_file.is_none() {
+            let mut socket_type = String::from("listener");
+            if self.send_buf.is_some() {
+                socket_type = "sender".to_string();
+            } else if self.recv_buf.is_some() {
+                socket_type = "receiver".to_string();
+            }
+            let log_name = format!("./target/logs/Log-{}:{}-{}", sock_id.local_addr, sock_id.local_port, socket_type);
+            self.log_file = Some(File::create(log_name).unwrap());
+        }
+
+        self.log_file.as_mut().unwrap().write_all(ch.as_bytes()).unwrap();
+
     }
 }
 
@@ -230,18 +254,8 @@ impl SocketManager {
                         id.remote_port = dest_port;
                         // ===== send SYN
                         // this send is non-blocking, it just puts the packet into the que
-                        // Should we use the manager task que, or the udp que ??
                         let seq_num = rand::thread_rng().gen_range(0..2048);
-                        self.udp_send.send(PacketCmd::SYN(id.clone(), seq_num)).unwrap();
-
-                        // ======== Setup timer for timeout
-                        let trans_time = Instant::now();
-                        self.timer_send.send(TimerCmd::New(
-                                                    trans_time + sock_content.rtt * Self::TIMEOUT_MULTI, 
-                                                    TaskMsg::SendNow(id.clone(), TransType::SYN, seq_num, 0, true)
-                                            )).unwrap();
-                        let ttoken = self.ttoken_recv.recv().unwrap();
-                        sock_content.packet_times.insert(seq_num, (Instant::now(), Some(ttoken)));
+                        self.task_send.send(TaskMsg::SendNow(id.clone(), TransType::SYN, seq_num, 0, false)).unwrap();
 
                         // switch socket state
                         sock_content.state = SocketState::SYN_SENT;
@@ -425,10 +439,12 @@ impl SocketManager {
         // if retransmit SYN
         if let TransType::SYN = ttype {
             self.udp_send.send(PacketCmd::SYN(sock_id.clone(), seq_num)).unwrap();
-            assert!(seq_num == sock_content.send_base);
+            sock_content.print_log(&sock_id, "S");
             if retrans_flag {
                 println!("Retransmiting SYN !!!");
+                sock_content.print_log(&sock_id, "!");
             }
+            assert!(seq_num == sock_content.send_base);
             // set up new timer
             self.timer_send.send(TimerCmd::New(
                 Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, // time limit
@@ -444,9 +460,11 @@ impl SocketManager {
         // handle FIN sending
         if let TransType::FIN = ttype {
             self.udp_send.send(PacketCmd::FIN(sock_id.clone(), seq_num)).unwrap();
+            sock_content.print_log(&sock_id, "F");
             assert!(seq_num == sock_content.send_base);
             if retrans_flag {
-                println!("Retransmiting SYN !!!");
+                println!("Retransmiting FIN !!!");
+                sock_content.print_log(&sock_id, "!");
                 // do not keep resend FIN, you may not get reply
                 // all done, connection is closed.
                 self.ports_alloc[sock_id.local_port as usize] = false;
@@ -475,13 +493,15 @@ impl SocketManager {
 
             
             self.udp_send.send(PacketCmd::DATA(sock_id.clone(), seq_num, data)).unwrap();
+            sock_content.print_log(&sock_id, ".");
+            if retrans_flag {
+                println!("Retransmitting DATA packet !");
+                sock_content.print_log(&sock_id, "!");
+            }
 
             // record packet trans time
             // Update timer if we are at the send base
             if seq_num == sock_content.send_base {
-                if retrans_flag {
-                    println!("Retransmitting DATA packet at send base ...");
-                }
                 // set up timer
                 self.timer_send.send(TimerCmd::New(
                     Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
@@ -534,12 +554,15 @@ impl SocketManager {
             if packet.get_seq_num() < sock_content_ref.send_base {
                 // useless ACK
                 println!("OnReceive(): Discard a new packet for send buf!");
+                // got an acknowledgement packet that 'does not' advances the acknowledgement field
+                sock_content_ref.print_log(&sock_id, "?");
                 return;
             }
         } else if sock_content_ref.recv_buf.is_some() {
             if packet.get_seq_num() < sock_content_ref.recv_next {
                 // useless retransmission, we had a ACK lost.
                 println!("OnReceive(): Discard a new packet for recv buf!");
+                sock_content_ref.print_log(&sock_id, "!");
                 // need to resend the ACK
                 // send ACK for DATA packet !
                 let wind_left = sock_content_ref.recv_wind + sock_content_ref.recv_base - sock_content_ref.recv_next;
@@ -551,6 +574,7 @@ impl SocketManager {
         match packet.get_type() {
             TransType::SYN => {
                 println!("OnReceive(): Got a SYN packet!");
+                sock_content_ref.print_log(&sock_id, "s");
                 // what if we got a retransmited SYN? -> just update the socket list?
                 // 1. if SYN is lost, the client will retransmit, no processing required,
                 // 2. if ACK is lost, the client will retransmit. The packet will match the new connection socket,
@@ -588,8 +612,12 @@ impl SocketManager {
                 println!("OnReceive(): Got a ACK packet!");
                 if sock_content_ref.send_buf.is_some() && packet.get_seq_num() == sock_content_ref.send_base {
                     // useless ack for client socket
+                    // got an acknowledgement packet that 'does not' advances the acknowledgement field
+                    sock_content_ref.print_log(&sock_id, "?");
                     return;
                 }
+                // got an acknowledgement packet that advances the acknowledgement field
+                sock_content_ref.print_log(&sock_id, ":");
                 match sock_content_ref.state {
                     SocketState::SYN_SENT => {
                         // check seq_num
@@ -740,6 +768,7 @@ impl SocketManager {
             }
             TransType::DATA => {
                 println!("OnReceive(): Got a DATA packet!");
+                sock_content_ref.print_log(&sock_id, ".");
                 if let SocketState::ESTABLISHED = sock_content_ref.state {
                     // First, check the seq_num to see whether a packet is lost.
                     if packet.get_seq_num() == sock_content_ref.recv_next {
@@ -776,6 +805,7 @@ impl SocketManager {
             }
             TransType::FIN => {
                 println!("OnReceive(): Got a FIN packet!");
+                sock_content_ref.print_log(&sock_id, "f");
                 if let SocketState::ESTABLISHED = sock_content_ref.state {
                     // if it is a client socket
                     if sock_content_ref.send_buf.is_some() {
