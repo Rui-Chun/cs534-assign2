@@ -1,10 +1,10 @@
-use core::{panic, time};
+use core::{panic};
 use std::{cmp, collections::{HashMap, VecDeque}, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, thread, time::{Duration, Instant}, u32, usize};
 use super::{socket::{SocketID, SocketState, Socket}, timer::{TimerCmd, TimerToken}, udp_utils::PacketCmd};
 use super::packet::{self, TransportPacket, TransType};
 use super::udp_utils;
 use super::timer;
-use rand::{Rng, seq};
+use rand::{Rng};
 
 struct SocketContents {
     state: SocketState,
@@ -79,13 +79,10 @@ pub enum TaskMsg {
     // ==== UDP packets related
     // a new packet is received
     OnReceive(TransportPacket),
-    // schedule a sending task
-    SendNow(SocketID, u32, u32), // (sock_id, seq_start, len)
+    /// schedule a sending task
+    /// (sock_id, trans_type, seq_start, len, retrans_flag)
+    SendNow(SocketID,TransType, u32, u32, bool),
 
-    // ==== for timer callback
-    /// timer ask the manager to retransmit
-    /// (sock_id, seq_start, len)
-    ReTransmit(SocketID, TransType, u32, u32), 
 }
 
 // return values for socket task
@@ -232,8 +229,8 @@ impl SocketManager {
                         id.remote_addr = dest_addr.parse().unwrap();
                         id.remote_port = dest_port;
                         // ===== send SYN
-                        // Maybe we do not need an extra udp request queue? Ok...
                         // this send is non-blocking, it just puts the packet into the que
+                        // Should we use the manager task que, or the udp que ??
                         let seq_num = rand::thread_rng().gen_range(0..2048);
                         self.udp_send.send(PacketCmd::SYN(id.clone(), seq_num)).unwrap();
 
@@ -241,11 +238,12 @@ impl SocketManager {
                         let trans_time = Instant::now();
                         self.timer_send.send(TimerCmd::New(
                                                     trans_time + sock_content.rtt * Self::TIMEOUT_MULTI, 
-                                                    TaskMsg::ReTransmit(id.clone(), TransType::SYN, seq_num, 0)
+                                                    TaskMsg::SendNow(id.clone(), TransType::SYN, seq_num, 0, true)
                                             )).unwrap();
                         let ttoken = self.ttoken_recv.recv().unwrap();
                         sock_content.packet_times.insert(seq_num, (Instant::now(), Some(ttoken)));
-    
+
+                        // switch socket state
                         sock_content.state = SocketState::SYN_SENT;
                         sock_content.send_buf = Some(VecDeque::with_capacity(Self::BUFFER_CAP));
                         // set up the window
@@ -274,12 +272,10 @@ impl SocketManager {
 
                 TaskMsg::Release(sock_id) => self.handle_release(sock_id),
 
-                TaskMsg::SendNow(sock_id, seq_num, len) => self.handle_sendnow(sock_id, seq_num, len),
+                TaskMsg::SendNow(sock_id, ttype, seq_num, len, retrans) => 
+                                self.handle_sendnow(sock_id, ttype, seq_num, len, retrans),
                 
                 TaskMsg::OnReceive(packet) => self.handle_receive(packet),
-
-                TaskMsg::ReTransmit(sock_id, ttype, seq_num, len) => 
-                                            self.handle_retransmit(sock_id, ttype, seq_num, len),
 
                 _ => {}
             }
@@ -316,7 +312,7 @@ impl SocketManager {
         sock_content.send_next += to_write;
 
         // schedule a sending task
-        self.task_send.send(TaskMsg::SendNow(sock_id, sock_content.send_next - to_write, to_write)).unwrap();
+        self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content.send_next - to_write, to_write, false)).unwrap();
 
         // send ret value
         sock_content.send_ret(TaskRet::Write(Ok( to_write as usize ))).unwrap();
@@ -325,39 +321,6 @@ impl SocketManager {
                 "Send buf size does not fit!");
     }
 
-    /// handler function for SendNow task
-    fn handle_sendnow(&mut self, sock_id: SocketID, mut seq_num: u32, mut len:u32) {
-        let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
-
-        // send packets until done
-        loop {
-            let to_send = cmp::min(packet::TransportPacket::MAX_PAYLOAD_SIZE, len as usize);
-            let data = sock_content.send_buf.as_mut().unwrap().make_contiguous();
-            let start_index = (seq_num - sock_content.send_base) as usize;
-            let data = Vec::from(&data[start_index..start_index+to_send]);
-            self.udp_send.send(PacketCmd::DATA(sock_id.clone(), seq_num, data)).unwrap();
-            // record packet trans time
-            // if we are at the send buf base, start new timer. 
-            // Otherwise, the timer willl be started when ACK arrived.
-            if seq_num == sock_content.send_base {
-                self.timer_send.send(TimerCmd::New(
-                    Instant::now()+sock_content.rtt * Self::TIMEOUT_MULTI, 
-                    TaskMsg::ReTransmit(sock_id.clone(), TransType::DATA, seq_num, len)
-                )).unwrap();
-                let ttoken = self.ttoken_recv.recv().unwrap();
-                sock_content.packet_times.insert(seq_num, (Instant::now(), Some(ttoken)));
-            } else {
-                sock_content.packet_times.insert(seq_num, (Instant::now(), None));
-            }
-
-            if to_send >= len as usize {break;}
-            else {
-                len -= to_send as u32;
-                seq_num += to_send as u32;
-            }
-        }
-
-    }
 
     /// handler function when read API is called
     fn handle_read (&mut self, sock_id: SocketID, len: u32) {
@@ -409,16 +372,9 @@ impl SocketManager {
                     // 2. check whether all data are acked
                     if sock_content.send_base == sock_content.send_next {
                         // send FIN and get into FIN_SENT
-                        self.udp_send.send(PacketCmd::FIN(sock_id.clone(), sock_content.send_next)).unwrap();
+                        self.task_send.send(TaskMsg::SendNow(sock_id, TransType::FIN, sock_content.send_next, 0, false)).unwrap();
                         sock_content.state = SocketState::FIN_SENT;
 
-                        // 3. set up a retransmit timer.
-                        self.timer_send.send(TimerCmd::New(
-                            Instant::now()+sock_content.rtt * Self::TIMEOUT_MULTI, 
-                            TaskMsg::ReTransmit(sock_id.clone(), TransType::FIN, sock_content.send_next, 0)
-                        )).unwrap();
-                        let ttoken = self.ttoken_recv.recv().unwrap();
-                        sock_content.packet_times.insert(sock_content.send_next, (Instant::now(), Some(ttoken)));
                     } else {
                         // get into FIN_WAIT, wait for retransmission and ack
                         sock_content.state = SocketState::FIN_WAIT;
@@ -429,22 +385,15 @@ impl SocketManager {
                     // if it is server recv socket
 
                     // 1. send FIN, get into FIN_SENT state.
-                    self.udp_send.send(PacketCmd::FIN(sock_id.clone(), sock_content.send_next)).unwrap();
+                    self.task_send.send(TaskMsg::SendNow(sock_id, TransType::FIN, sock_content.recv_next, 0, false)).unwrap();
                     sock_content.state = SocketState::FIN_SENT;
-
-                    // 2. set up a retransmit timer.
-                    self.timer_send.send(TimerCmd::New(
-                        Instant::now()+sock_content.rtt * Self::TIMEOUT_MULTI, 
-                        TaskMsg::ReTransmit(sock_id.clone(), TransType::FIN, sock_content.send_next, 0)
-                    )).unwrap();
-                    let ttoken = self.ttoken_recv.recv().unwrap();
-                    sock_content.packet_times.insert(sock_content.send_next, (Instant::now(), Some(ttoken)));
                 }
                 else {
                     // an undefined socket
                     panic!("trying to close a undefined socket!");
                 }
             }
+            // if close is called in SHUTDOWN state
             SocketState::SHUTDOWN => {
                 self.ports_alloc[sock_id.local_port as usize] = false;
                 self.socket_map.remove(&sock_id).unwrap();
@@ -464,12 +413,12 @@ impl SocketManager {
         self.socket_map.remove(&sock_id);
     }
 
-    fn handle_retransmit (&mut self, sock_id: SocketID, ttype: TransType, mut seq_num: u32, mut len: u32) {
-        println!("Retransmit() is called!!!");
+    /// handler for send packets including retransmitting packets
+    fn handle_sendnow (&mut self, sock_id: SocketID, ttype: TransType, mut seq_num: u32, mut len: u32, retrans_flag: bool) {
         let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
 
-        // check whether retrans is still needed
-        if sock_content.send_base > seq_num {
+        // check whether sending packet is still needed 
+        if sock_content.send_buf.is_some() && sock_content.send_base > seq_num {
             return;
         }
 
@@ -477,30 +426,46 @@ impl SocketManager {
         if let TransType::SYN = ttype {
             self.udp_send.send(PacketCmd::SYN(sock_id.clone(), seq_num)).unwrap();
             assert!(seq_num == sock_content.send_base);
-            println!("In retransmit SYN, timer is updated.");
+            if retrans_flag {
+                println!("Retransmiting SYN !!!");
+            }
             // set up new timer
             self.timer_send.send(TimerCmd::New(
-                Instant::now()+sock_content.rtt * Self::TIMEOUT_MULTI, 
-                TaskMsg::ReTransmit(sock_id.clone(), ttype.clone(), seq_num, len)
+                Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, // time limit
+                TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, true) // timeour callback
             )).unwrap();
+            // record timer token
             let ttoken = self.ttoken_recv.recv().unwrap();
             sock_content.packet_times.insert(seq_num, (Instant::now(), Some(ttoken)));
+            // end of sending
             return;
         }
 
-        // handle FIN resend
+        // handle FIN sending
         if let TransType::FIN = ttype {
             self.udp_send.send(PacketCmd::FIN(sock_id.clone(), seq_num)).unwrap();
             assert!(seq_num == sock_content.send_base);
-            println!("In retransmit FIN, no more resending.");
-            // do not keep resend FIN, you may not get reply
-            // all done, connection is closed.
-            self.ports_alloc[sock_id.local_port as usize] = false;
-            self.socket_map.remove(&sock_id);
+            if retrans_flag {
+                println!("Retransmiting SYN !!!");
+                // do not keep resend FIN, you may not get reply
+                // all done, connection is closed.
+                self.ports_alloc[sock_id.local_port as usize] = false;
+                self.socket_map.remove(&sock_id);
+                return;
+            }
+            // set up new timer if not retrans
+            self.timer_send.send(TimerCmd::New(
+                Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, // time limit
+                TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, true) // timeour callback
+            )).unwrap();
+            // record timer token
+            let ttoken = self.ttoken_recv.recv().unwrap();
+            sock_content.packet_times.insert(seq_num, (Instant::now(), Some(ttoken)));
+            // end of sending
             return;
         }
 
-        // send data
+        // to send data
         // send packets until done
         loop {
             let to_send = cmp::min(packet::TransportPacket::MAX_PAYLOAD_SIZE, len as usize);
@@ -512,12 +477,15 @@ impl SocketManager {
             self.udp_send.send(PacketCmd::DATA(sock_id.clone(), seq_num, data)).unwrap();
 
             // record packet trans time
-            // Must update timer
+            // Update timer if we are at the send base
             if seq_num == sock_content.send_base {
-                println!("In retransmit(), timer is updated.");
+                if retrans_flag {
+                    println!("Retransmitting DATA packet at send base ...");
+                }
+                // set up timer
                 self.timer_send.send(TimerCmd::New(
-                    Instant::now()+sock_content.rtt * Self::TIMEOUT_MULTI, 
-                    TaskMsg::ReTransmit(sock_id.clone(), ttype.clone(), seq_num, len)
+                    Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
+                    TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, true)
                 )).unwrap();
                 let ttoken = self.ttoken_recv.recv().unwrap();
                 sock_content.packet_times.insert(seq_num, (Instant::now(), Some(ttoken)));
@@ -618,7 +586,8 @@ impl SocketManager {
             }
             TransType::ACK => {
                 println!("OnReceive(): Got a ACK packet!");
-                if packet.get_seq_num() == sock_content_ref.send_base {
+                if sock_content_ref.send_buf.is_some() && packet.get_seq_num() == sock_content_ref.send_base {
+                    // useless ack for client socket
                     return;
                 }
                 match sock_content_ref.state {
@@ -659,7 +628,7 @@ impl SocketManager {
                         assert_eq!(sock_content_ref.send_buf.as_ref().unwrap().len() as u32, sock_content_ref.send_next - sock_content_ref.send_base);
                         assert!(sock_content_ref.send_base <= sock_content_ref.send_next);
 
-                        // update rtt
+                        // update rtt and cancel timer if needed
                         if let Some(time_entry) = sock_content_ref.packet_times.remove(&old_send_base) {
                             if time_entry.1.is_some() {
                                 // if we set up a timer earlier, cancel it
@@ -676,11 +645,13 @@ impl SocketManager {
                             let new_time_entry = sock_content_ref.packet_times.remove(&sock_content_ref.send_base).unwrap();
 
                             assert!(new_time_entry.1.is_none());
+                            // update timer
                             self.timer_send.send(TimerCmd::New(
                                 new_time_entry.0 + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
-                                TaskMsg::ReTransmit(
+                                TaskMsg::SendNow(
                                     sock_id.clone(), TransType::DATA, sock_content_ref.send_base, 
-                                    sock_content_ref.send_next - sock_content_ref.send_base
+                                    sock_content_ref.send_next - sock_content_ref.send_base,
+                                    true
                                 )
                             )).unwrap();
                             // put back the packet records!
@@ -694,6 +665,7 @@ impl SocketManager {
 
                         // check seq_num
                         if packet.get_seq_num() == sock_content_ref.send_next {
+                            sock_content_ref.send_base = packet.get_seq_num();
                             // cancel timer
                             if let Some(time_entry) = sock_content_ref.packet_times.remove(&sock_content_ref.send_base) {
                                 if time_entry.1.is_some() {
@@ -703,15 +675,8 @@ impl SocketManager {
                             }
                             // we are good to close now.
                             // send FIN, get into FIN_SENT state.
-                            self.udp_send.send(PacketCmd::FIN(sock_id.clone(), sock_content_ref.send_next)).unwrap();
+                            self.task_send.send(TaskMsg::SendNow(sock_id, TransType::FIN, sock_content_ref.send_next, 0, false)).unwrap();
                             sock_content_ref.state = SocketState::FIN_SENT;
-                            // set up FIN timer
-                            self.timer_send.send(TimerCmd::New(
-                                Instant::now()+sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
-                                TaskMsg::ReTransmit(sock_id.clone(), TransType::FIN, sock_content_ref.send_next, 0)
-                            )).unwrap();
-                            let ttoken = self.ttoken_recv.recv().unwrap();
-                            sock_content_ref.packet_times.insert(sock_content_ref.send_next, (Instant::now(), Some(ttoken)));
                         } else {
                             // delete data in buf
                             let to_drain = packet.get_seq_num() - sock_content_ref.send_base;
@@ -741,9 +706,10 @@ impl SocketManager {
                                 assert!(new_time_entry.1.is_none());
                                 self.timer_send.send(TimerCmd::New(
                                     new_time_entry.0 + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
-                                    TaskMsg::ReTransmit(
+                                    TaskMsg::SendNow(
                                         sock_id.clone(), TransType::DATA, sock_content_ref.send_base, 
-                                        sock_content_ref.send_next - sock_content_ref.send_base
+                                        sock_content_ref.send_next - sock_content_ref.send_base,
+                                        true
                                     )
                                 )).unwrap();
                                 // put back the packet records!
