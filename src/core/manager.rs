@@ -151,7 +151,7 @@ impl SocketManager {
     const RTT_LOW_BOUND: u64 = 5; // ms
     const MSS: usize = TransportPacket::MAX_PAYLOAD_SIZE; // minimal segment size for congestion control
 
-    pub fn new () -> (Self, Sender<TaskMsg>, Receiver<Receiver<TaskRet>>) {
+    pub fn new (local_addr: String) -> (Self, Sender<TaskMsg>, Receiver<Receiver<TaskRet>>) {
         // ===== init channels for inter thread comm =====
         // the channel to send tasks of sockets
         let (task_send, task_queue) = mpsc::channel::<TaskMsg>();
@@ -160,7 +160,7 @@ impl SocketManager {
         
         // ==== start udp loops ====
         let (udp_send, udp_recv) = mpsc::channel::<PacketCmd>();
-        udp_utils::start_loops(udp_recv, task_send.clone());
+        udp_utils::start_loops(local_addr, udp_recv, task_send.clone());
 
         // ==== start timer thread ====
         let (mut retrans_timer, timer_send, ttoken_recv) = timer::Timer::new(task_send.clone());

@@ -68,12 +68,6 @@ fn main() {
         )
         .get_matches();
 
-    // ===== start socket manager ====
-    let (mut socket_manager, task_sender, ret_channel_recv) = manager::SocketManager::new();
-    thread::spawn(move || {
-        socket_manager.start();
-    });
-
     // get exec type
     let command: String = arg_matches
         .value_of("exec_type")
@@ -82,6 +76,12 @@ fn main() {
         .expect("can not parse exec type");
 
     let args = parse_args(arg_matches);
+
+    // ===== start socket manager ====
+    let (mut socket_manager, task_sender, ret_channel_recv) = manager::SocketManager::new(args.local_addr.clone());
+    thread::spawn(move || {
+        socket_manager.start();
+    });
     
     match command.as_str() {
         "transfer" => {

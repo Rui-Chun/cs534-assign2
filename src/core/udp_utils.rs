@@ -23,23 +23,22 @@ pub enum PacketCmd {
 
 // == entry point of the udp loop thread ==
 // actually we need two loops, one for sending, one for recv
-pub fn start_loops (cmd_recv: Receiver<PacketCmd>, task_send: Sender<TaskMsg>) {
-    let udp_in_addr: Arc<Mutex<Ipv4Addr>> = Arc::new(Mutex::new(Ipv4Addr::new(127, 0,0, 1)));
-    let udp_in_addr_c = udp_in_addr.clone();
+pub fn start_loops (local_addr: String, cmd_recv: Receiver<PacketCmd>, task_send: Sender<TaskMsg>) {
 
+    let local_addr_c = local_addr.clone();
     thread::spawn(move || {
-        in_loop(task_send, udp_in_addr_c);
+        in_loop(local_addr_c, task_send);
     });
 
     thread::spawn(move || {
-        out_loop(cmd_recv, udp_in_addr);
+        out_loop(local_addr, cmd_recv);
     });
 
 }
 
 // sending out packets
 // the manager can send cmds to udp loop
-fn out_loop (cmd_recv: Receiver<PacketCmd>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
+fn out_loop (_local_addr: String, cmd_recv: Receiver<PacketCmd>) {
     // parse the commands
     for cmd in cmd_recv {
         match cmd {
@@ -53,9 +52,6 @@ fn out_loop (cmd_recv: Receiver<PacketCmd>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
                 let amt = socket.send_to(&out_buf, format!("{}:{}", id.remote_addr, UDP_IN_PORT)).unwrap();
                 if amt != out_buf.len() {
                     panic!("Can not send complete packet!");
-                }
-                if id.local_addr != *udp_in_addr.lock().unwrap() {
-                    *udp_in_addr.lock().unwrap() = id.local_addr;
                 }
             }
             PacketCmd::ACK(id, window, seq_num) => {
@@ -103,10 +99,10 @@ fn out_loop (cmd_recv: Receiver<PacketCmd>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
 
 // recv incoming packets
 // the udp dispatcher can call manager to handler received packets
-fn in_loop (task_send: Sender<TaskMsg>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
+fn in_loop (local_addr: String, task_send: Sender<TaskMsg>) {
     // we only monitor one in-coming address for now...
     let mut rng = rand::thread_rng();
-    let socket = UdpSocket::bind(format!("{}:{}", *udp_in_addr.lock().unwrap(), UDP_IN_PORT)).unwrap();
+    let socket = UdpSocket::bind(format!("{}:{}", local_addr, UDP_IN_PORT)).unwrap();
     loop {
         let mut in_buf = [0; 2048];
         let (amt, src) = socket.recv_from(&mut in_buf).unwrap();
@@ -114,7 +110,7 @@ fn in_loop (task_send: Sender<TaskMsg>, udp_in_addr: Arc<Mutex<Ipv4Addr>>) {
         let tmp = VecDeque::from(Vec::from(&in_buf[0..amt]));
         println!("Got packet, Len = {}", tmp.len());
         if let IpAddr::V4(src_addr) = src.ip() {
-            packet.unpack(tmp, src_addr, *udp_in_addr.lock().unwrap(),);
+            packet.unpack(tmp, src_addr, local_addr.parse().unwrap());
 
         } else {
             panic!("can not parse ipv4 addr!");
