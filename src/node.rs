@@ -270,7 +270,7 @@ fn exec_window_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_r
 
     // flow control test
     thread::spawn(move || {
-        for _ in 0..20 {
+        for _ in 0..40 {
             let mut test_data = Vec::new();
             for i in 0..200 {
                 test_data.push(i as u8);
@@ -281,14 +281,16 @@ fn exec_window_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_r
             thread::sleep(time::Duration::from_millis(10));
         }
         thread::sleep(time::Duration::from_secs(10));
-        client_sock.close();
+        client_sock.release();
     });
 
-    for _ in 0..20 {
+    for _ in 0..40 {
         let mut recv_data = Vec::new();
         loop {
+            println!("test reading ... ");
             recv_data = server_recv.read(200).unwrap();
             if recv_data.len() == 200 {
+                println!("Len = {} read ", recv_data.len());
                 break;
             }
             thread::sleep(time::Duration::from_millis(10));
@@ -302,9 +304,10 @@ fn exec_window_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_r
     }
 
     println!("All data right! \n");
-
+    thread::sleep(time::Duration::from_millis(10));
     server_recv.close(); // we do not support current FIN from both side.
-    server_sock.close();
+    thread::sleep(time::Duration::from_millis(10));
+    server_sock.release();
 
     // wait
     thread::sleep(time::Duration::from_millis(10));

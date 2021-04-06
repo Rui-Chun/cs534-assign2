@@ -28,9 +28,13 @@ struct SocketContents {
     send_wind: u32,
 
     /// flow control, recv window left
-    send_flow_ctl: u32,
-    /// conjestion control 
-    send_cong_ctrl: u32,
+    send_flow_ctl: usize,
+    /// conjestion control, num of bytes
+    send_cong_ctrl: usize,
+    dup_ack_record: u32,
+    dup_ack_num: u32,
+    /// window counter, how many times we have been limited by the win
+    win_counter: u32,
 
     /// the start of bytes to be read by user
     recv_base: u32,
@@ -54,8 +58,9 @@ impl SocketContents {
         SocketContents {
             state: SocketState::CLOSED, send_buf: None, recv_buf: None, ret_sender, backlog_que: None,
             send_base:0, send_next:0, send_wind: SocketManager::BUFFER_CAP as u32, 
-            send_flow_ctl: SocketManager::BUFFER_CAP as u32,
-            send_cong_ctrl: SocketManager::BUFFER_CAP as u32,
+            send_flow_ctl: SocketManager::BUFFER_CAP,
+            send_cong_ctrl: SocketManager::MSS * 100, // no slow start, starting from a high value
+            dup_ack_record: 0, dup_ack_num: 0, win_counter: 1,
             recv_base:0, recv_next:0, recv_wind: SocketManager::BUFFER_CAP as u32,
             rtt: Duration::from_micros(2000), // 2 ms as the init value for time out
             packet_times: HashMap::new(),
@@ -140,10 +145,11 @@ pub struct SocketManager {
 }
 
 impl SocketManager {
-    const BUFFER_CAP: usize = 1 << 12; // how many bytes the buffer can hold
+    const BUFFER_CAP: usize = 4000; // how many bytes the buffer can hold
     const RTT_RATIO: f64 = 0.9; // the exp update ratio of rtt
     const TIMEOUT_MULTI: u32 = 3; // timeout  = multi * rtt
     const RTT_LOW_BOUND: u64 = 5; // ms
+    const MSS: usize = TransportPacket::MAX_PAYLOAD_SIZE; // minimal segment size for congestion control
 
     pub fn new () -> (Self, Sender<TaskMsg>, Receiver<Receiver<TaskRet>>) {
         // ===== init channels for inter thread comm =====
@@ -356,11 +362,11 @@ impl SocketManager {
         sock_content.send_ret(TaskRet::Read(Ok( buf_read ))).unwrap();
 
         // move window
-        // if sock_content.recv_next - sock_content.recv_base == sock_content.recv_wind  && to_read > 0 {
-        //     // we must tell the client the newest window size !!
-        //     println!("recv buf full and read called.");
-        //     self.udp_send.send(PacketCmd::ACK(sock_id.clone(), to_read as u32, sock_content.recv_next)).unwrap();
-        // }
+        if sock_content.recv_next - sock_content.recv_base == sock_content.recv_wind  && to_read > 0 {
+            // we must tell the client the newest window size !!
+            println!("recv buf full and read called. wind = {}", to_read);
+            self.udp_send.send(PacketCmd::ACK(sock_id.clone(), to_read as u32, sock_content.recv_next)).unwrap();
+        }
         sock_content.recv_base += to_read as u32;
         assert!(sock_content.recv_base <= sock_content.recv_next);
         assert!(sock_content.recv_next - sock_content.recv_base == sock_content.recv_buf.as_ref().unwrap().len() as u32);
@@ -437,8 +443,13 @@ impl SocketManager {
 
     /// handler for send packets including retransmitting packets
     fn handle_sendnow (&mut self, sock_id: SocketID, ttype: TransType, mut seq_num: u32, mut len: u32, retrans_flag: bool) {
-        let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
-
+        println!("Sending packet {:?} , retrans = {}", ttype, retrans_flag);
+        let sock_content = self.socket_map.get_mut(&sock_id);
+        let sock_content = if sock_content.is_none() {
+            return;
+        } else {
+            sock_content.unwrap()
+        };
         // check whether sending packet is still needed 
         if sock_content.send_buf.is_some() && sock_content.send_base > seq_num {
             return;
@@ -491,33 +502,46 @@ impl SocketManager {
             return;
         }
 
+
         // Check all the windows
         // how many bytes we can still send?
         let cong_lim = sock_content.send_cong_ctrl as isize + sock_content.send_base as isize - seq_num as isize;
         let win_left = cmp::min(sock_content.send_flow_ctl as isize, cong_lim);
+        println!("cong_lim = {}, win_left = {}, len_to_send = {}", cong_lim, win_left, len);
         // if window is not large enough
-        if win_left < len as isize {
-            let time_entry = sock_content.packet_times.remove(&seq_num);
-            // if it has been transmitted before
-            if time_entry.is_some() {
-                // update timer to transmit later
-                assert!(time_entry.unwrap().1.is_some());
-                self.timer_send.send(TimerCmd::New(
-                    Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
-                    TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
-                )).unwrap();
-                let ttoken = self.ttoken_recv.recv().unwrap();
-                sock_content.packet_times.insert(seq_num, (time_entry.unwrap().0, Some(ttoken)));
+        if win_left < Self::MSS as isize {
+            // how many times we have been limited by the window
+            sock_content.win_counter =  (sock_content.win_counter + 1) % 50;
+            // after ten times limit, try to reach out.
+            if sock_content.win_counter != 0 {
+
+                let time_entry = sock_content.packet_times.remove(&seq_num);
+                // if it has been transmitted before
+                if time_entry.is_some() {
+                    // update timer to transmit later
+                    assert!(time_entry.unwrap().1.is_some());
+                    self.timer_send.send(TimerCmd::New(
+                        Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
+                        TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
+                    )).unwrap();
+                    let ttoken = self.ttoken_recv.recv().unwrap();
+                    sock_content.packet_times.insert(seq_num, (time_entry.unwrap().0, Some(ttoken)));
+                }
+                // if it is the first transmission, no time entry 
+                else {
+                    self.timer_send.send(TimerCmd::New(
+                        Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
+                        TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
+                    )).unwrap();
+                }
+                return;
             }
-            // if it is the first transmission, no time entry 
-            else {
-                self.timer_send.send(TimerCmd::New(
-                    Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
-                    TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
-                )).unwrap();
-            }
-            return;
         }
+
+        // update sending length
+        // it needs to be limited by the window, but it can not be zeros
+        len = cmp::min(win_left as u32, len);
+        len = cmp::max(Self::MSS as u32, len);
 
 
         // to send data
@@ -648,15 +672,33 @@ impl SocketManager {
             TransType::ACK => {
                 println!("OnReceive(): Got a ACK packet!");
                 // update flow control window
-                sock_content_ref.send_flow_ctl = packet.get_wind();
+                sock_content_ref.send_flow_ctl = packet.get_wind() as usize;
                 println!("New flow control window = {}", sock_content_ref.send_flow_ctl);
                 if sock_content_ref.send_buf.is_some() && packet.get_seq_num() == sock_content_ref.send_base {
                     // useless ack for client socket
                     // got an acknowledgement packet that 'does not' advances the acknowledgement field
                     println!("A duplicate ACK !");
                     sock_content_ref.print_log(&sock_id, "?");
+                    // if new dup ack packet
+                    if packet.get_seq_num() != sock_content_ref.dup_ack_record {
+                        sock_content_ref.dup_ack_num = 1;
+                        sock_content_ref.dup_ack_record = packet.get_seq_num();
+                    } else {
+                        sock_content_ref.dup_ack_num += 1;
+                        // if three dup ACKs
+                        if sock_content_ref.dup_ack_num == 3 {
+                            // update congestion control window
+                            sock_content_ref.send_cong_ctrl /= 2;
+                            // do a fast retransmission ?
+                            // Do not, we are not implementing Reno ...
+                            // self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content_ref.send_base, Self::MSS as u32, true)).unwrap();
+                        }
+                    }
                     return;
                 }
+                // Congestion Control ==== > additive increase
+                // increases window by 1 per round-trip time
+                sock_content_ref.send_cong_ctrl += Self::MSS * Self::MSS / sock_content_ref.send_cong_ctrl ;
                 // got an acknowledgement packet that advances the acknowledgement field
                 sock_content_ref.print_log(&sock_id, ":");
                 match sock_content_ref.state {
@@ -804,6 +846,7 @@ impl SocketManager {
                         // cancel retrans timer
                         if let Some(time_entry) = sock_content_ref.packet_times.remove(&(packet.get_seq_num() -1 )) {
                             if time_entry.1.is_some() {
+                                println!("FIN timer canceled!");
                                 // if we set up a timer earlier, cancel it
                                 self.timer_send.send(TimerCmd::Cancel(time_entry.1.unwrap())).unwrap();
                             }
@@ -827,7 +870,7 @@ impl SocketManager {
                         // copy as many as we can, discard the rest.
                         let buf_left =  sock_content_ref.recv_wind - (sock_content_ref.recv_next - sock_content_ref.recv_base);
                         let to_recv = cmp::min(buf_left, packet.get_payload_len());
-
+                        
                         // copy to recv buf
                         sock_content_ref.recv_buf.as_mut().unwrap().extend(packet.get_payload()[..to_recv as usize].iter());
                         sock_content_ref.recv_next += to_recv;
