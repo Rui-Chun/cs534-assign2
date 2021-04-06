@@ -1,6 +1,7 @@
 use core::panic;
 use std::{hash::Hash, net::Ipv4Addr, usize};
 use std::sync::mpsc::{Sender, Receiver};
+use std::{thread, time};
 
 use super::manager::{TaskMsg, TaskRet};
 
@@ -183,6 +184,23 @@ impl Socket {
 
     }
 
+    pub fn write_all (&self, buf: &Vec<u8>) -> Result<(), isize> {
+        let mut pos = 0;
+        let mut len = buf.len();
+        loop {
+            let amount = self.write(buf, pos, len).unwrap();
+            if amount == len {
+                break;
+            } else {
+                len -= amount;
+                pos += amount;
+            }
+            // wait for the sending
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        return Ok(());
+    }
+
     /**
      * Read from the socket up to len bytes into the buffer buf starting at
      * position pos.
@@ -199,6 +217,20 @@ impl Socket {
             println!("Socket Read(): Can not read!");
             return Err(-1);
         }
+    }
+
+    /// non-blocking read. keep trying until done.
+    pub fn read_all(&self, amount: usize) -> Result<Vec<u8>, isize> {
+        let mut recv_data = Vec::new();
+        loop {
+            recv_data.append(&mut self.read(amount).expect("Read failed"));
+            if recv_data.len() == amount {
+                break;
+            }
+            // wait for new data
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        return Ok(recv_data);
     }
 
     // pub fn isConnectionPending(&self) -> bool {

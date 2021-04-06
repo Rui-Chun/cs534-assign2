@@ -1,5 +1,5 @@
 use core::{panic};
-use std::{cmp, collections::{HashMap, VecDeque}, convert::TryInto, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, thread, time::{Duration, Instant}, u32, usize};
+use std::{cmp, collections::{HashMap, VecDeque}, net::Ipv4Addr, sync::mpsc::{self, Receiver, SendError, Sender}, thread, time::{Duration, Instant}, u32, usize};
 use super::{socket::{SocketID, SocketState, Socket}, timer::{TimerCmd, TimerToken}, udp_utils::PacketCmd};
 use super::packet::{self, TransportPacket, TransType};
 use super::udp_utils;
@@ -333,6 +333,11 @@ impl SocketManager {
     fn handle_write (&mut self, sock_id: SocketID, buf: Vec<u8>, pos: u32, len: u32) {
         let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
 
+        if sock_content.state != SocketState::ESTABLISHED {
+            // send ret value
+            sock_content.send_ret(TaskRet::Write(Err(-1))).unwrap();
+        }
+
         // write send buf
         let to_write = cmp::min(sock_content.send_base + sock_content.send_wind - sock_content.send_next, len);
         sock_content.send_buf.as_mut().unwrap().extend(buf[pos as usize..(pos+to_write) as usize].iter());
@@ -443,7 +448,8 @@ impl SocketManager {
 
     /// handler for send packets including retransmitting packets
     fn handle_sendnow (&mut self, sock_id: SocketID, ttype: TransType, mut seq_num: u32, mut len: u32, retrans_flag: bool) {
-        println!("Sending packet {:?} , retrans = {}", ttype, retrans_flag);
+        // println!("Sending packet {:?} , retrans = {}", ttype, retrans_flag);
+        
         let sock_content = self.socket_map.get_mut(&sock_id);
         let sock_content = if sock_content.is_none() {
             return;
@@ -507,7 +513,8 @@ impl SocketManager {
         // how many bytes we can still send?
         let cong_lim = sock_content.send_cong_ctrl as isize + sock_content.send_base as isize - seq_num as isize;
         let win_left = cmp::min(sock_content.send_flow_ctl as isize, cong_lim);
-        println!("cong_lim = {}, win_left = {}, len_to_send = {}", cong_lim, win_left, len);
+        // println!("cong_window = {}, win_left = {}, len_to_send = {}", sock_content.send_cong_ctrl, win_left, len);
+        
         // if window is not large enough
         if win_left < Self::MSS as isize {
             // how many times we have been limited by the window
@@ -691,7 +698,7 @@ impl SocketManager {
                             sock_content_ref.send_cong_ctrl /= 2;
                             // do a fast retransmission ?
                             // Do not, we are not implementing Reno ...
-                            // self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content_ref.send_base, Self::MSS as u32, true)).unwrap();
+                            self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content_ref.send_base, Self::MSS as u32, true)).unwrap();
                         }
                     }
                     return;

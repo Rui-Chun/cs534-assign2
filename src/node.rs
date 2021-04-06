@@ -126,12 +126,31 @@ fn exec_transfer (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv
     // client.start();
 
 
-    let mut sock = Socket::new(args.local_addr, task_sender.clone(), &ret_channel_recv);
-    sock.bind(args.local_port).expect("Can not bind local port!");
-    sock.connect(args.dest_addr, args.dest_port).expect("Can not establish connection.");
+    let mut sock1 = Socket::new(args.local_addr.clone(), task_sender.clone(), &ret_channel_recv);
+    sock1.bind(args.local_port).expect("Can not bind local port!");
+    sock1.connect(args.dest_addr.clone(), args.dest_port).expect("Can not establish connection.");
 
-    // sleep to wait for other threads to do the job
-    thread::sleep(time::Duration::from_secs(5));
+    // wait
+    thread::sleep(time::Duration::from_millis(10));
+
+    let mut sock2 = Socket::new(args.local_addr, task_sender.clone(), &ret_channel_recv);
+    sock2.bind(args.local_port + 1).expect("Can not bind local port!");
+    sock2.connect(args.dest_addr, args.dest_port).expect("Can not establish connection.");
+
+    for _ in 0..20 {
+        let mut test_data = Vec::new();
+        for i in 0..2000 {
+            test_data.push((i % 200) as u8);
+        }
+        sock1.write_all(&test_data).unwrap();
+        sock2.write_all(&test_data).unwrap();
+        // quicker sender
+        thread::sleep(time::Duration::from_millis(5));
+    }
+
+    sock1.close();
+    thread::sleep(time::Duration::from_secs(10));
+    sock2.close();
 
 }
 
@@ -168,8 +187,32 @@ fn exec_server (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: 
     sock.bind(args.local_port).expect("Can not bind local port!");
     sock.listen(args.backlog).expect("Can not listen to port!");
 
-    // sleep to wait for other threads to do the job
-    thread::sleep(time::Duration::from_secs(10));
+    loop {
+        // the receiving socket at server
+        let server_recv =  sock.accept();
+        if server_recv.is_ok() {
+            let server_recv = server_recv.unwrap();
+            let remote = format!("{}:{}", server_recv.id.remote_addr, server_recv.id.remote_port);
+            println!("Got a new connection from {}", remote);
+            thread::spawn(move || {
+                for _ in 0..20 {
+                    let recv_data = server_recv.read_all(2000).unwrap();       
+                    for i in 0..2000 {
+                        if recv_data[i] != (i % 200) as u8 {
+                            println!("From {}: Wring data received !!!", remote);
+                            return;
+                        }
+                    }
+                    // wait
+                    thread::sleep(time::Duration::from_millis(10));
+                }
+                println!("From {}: All data right! \n", remote);
+            });
+        }
+        // wait
+        thread::sleep(time::Duration::from_millis(100));
+    }
+
 }
 
 fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: Receiver<Receiver<TaskRet>>) {
@@ -222,14 +265,7 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     thread::sleep(time::Duration::from_millis(200));
 
     for _ in 0..20 {
-        let mut recv_data = Vec::new();
-        loop {
-            recv_data = server_recv.read(200).unwrap();
-            if recv_data.len() == 200 {
-                break;
-            }
-            thread::sleep(time::Duration::from_millis(10));
-        }
+        let recv_data = server_recv.read_all(200).unwrap();
 
         for i in 0..200 {
             assert!(recv_data[i] == i as u8);
@@ -285,16 +321,7 @@ fn exec_window_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_r
     });
 
     for _ in 0..40 {
-        let mut recv_data = Vec::new();
-        loop {
-            println!("test reading ... ");
-            recv_data = server_recv.read(200).unwrap();
-            if recv_data.len() == 200 {
-                println!("Len = {} read ", recv_data.len());
-                break;
-            }
-            thread::sleep(time::Duration::from_millis(10));
-        }
+        let recv_data = server_recv.read_all(200).unwrap();
         // slow receiver!
         thread::sleep(time::Duration::from_millis(200));
 
