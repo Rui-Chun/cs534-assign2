@@ -155,8 +155,8 @@ impl TransportPacket {
         }
     }
 
-    pub fn get_payload (&self) -> &Vec<u8> {
-        self.payload.as_ref().unwrap()
+    pub fn get_payload (&self) -> Option<&Vec<u8>> {
+        self.payload.as_ref()
     }
 
     pub fn get_wind (&self) -> u32 {

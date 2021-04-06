@@ -344,7 +344,9 @@ impl SocketManager {
         sock_content.send_next += to_write;
 
         // schedule a sending task
-        self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content.send_next - to_write, to_write, false)).unwrap();
+        if to_write > 0 {
+            self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content.send_next - to_write, to_write, false)).unwrap();
+        }
 
         // send ret value
         sock_content.send_ret(TaskRet::Write(Ok( to_write as usize ))).unwrap();
@@ -548,7 +550,8 @@ impl SocketManager {
         // update sending length
         // it needs to be limited by the window, but it can not be zeros
         len = cmp::min(win_left as u32, len);
-        len = cmp::max(Self::MSS as u32, len);
+        len = cmp::max(1 as u32, len);
+        // otherwise, the empty data packet will repeat itself. scheduled continuously
 
 
         // to send data
@@ -879,7 +882,9 @@ impl SocketManager {
                         let to_recv = cmp::min(buf_left, packet.get_payload_len());
                         
                         // copy to recv buf
-                        sock_content_ref.recv_buf.as_mut().unwrap().extend(packet.get_payload()[..to_recv as usize].iter());
+                        if packet.get_payload().is_some() {
+                            sock_content_ref.recv_buf.as_mut().unwrap().extend(packet.get_payload().unwrap()[..to_recv as usize].iter());
+                        }
                         sock_content_ref.recv_next += to_recv;
 
                         // make sure the buf is behaving correctly.
