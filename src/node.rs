@@ -131,11 +131,13 @@ fn exec_transfer (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv
     sock1.connect(args.dest_addr.clone(), args.dest_port).expect("Can not establish connection.");
 
     // wait
-    thread::sleep(time::Duration::from_millis(10));
+    thread::sleep(time::Duration::from_millis(1000));
 
     let mut sock2 = Socket::new(args.local_addr, task_sender.clone(), &ret_channel_recv);
     sock2.bind(args.local_port + 1).expect("Can not bind local port!");
     sock2.connect(args.dest_addr, args.dest_port).expect("Can not establish connection.");
+
+    thread::sleep(time::Duration::from_millis(1000));
 
     for _ in 0..20 {
         let mut test_data = Vec::new();
