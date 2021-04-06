@@ -62,7 +62,7 @@ impl SocketContents {
             send_cong_ctrl: SocketManager::MSS * 100, // no slow start, starting from a high value
             dup_ack_record: 0, dup_ack_num: 0, win_counter: 1,
             recv_base:0, recv_next:0, recv_wind: SocketManager::BUFFER_CAP as u32,
-            rtt: Duration::from_micros(2000), // 2 ms as the init value for time out
+            rtt: Duration::from_micros(100000), // 100 ms as the init value for time out
             packet_times: HashMap::new(),
             log_file: None,
         }
