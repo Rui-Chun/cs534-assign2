@@ -698,7 +698,7 @@ impl SocketManager {
                             sock_content_ref.send_cong_ctrl /= 2;
                             // do a fast retransmission ?
                             // Do not, we are not implementing Reno ...
-                            self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content_ref.send_base, Self::MSS as u32, true)).unwrap();
+                            // self.task_send.send(TaskMsg::SendNow(sock_id, TransType::DATA, sock_content_ref.send_base, Self::MSS as u32, true)).unwrap();
                         }
                     }
                     return;
