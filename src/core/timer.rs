@@ -59,7 +59,6 @@ impl Timer {
                         // remove the timer entry
                         self.timer_list.remove(&token);
                     }
-                    _ => {}
                 }
             }
         }

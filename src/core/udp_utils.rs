@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::VecDeque, net::Ipv4Addr, sync::{Arc, Mutex, mpsc::{Receiver, Sender}}, thread, usize};
+use std::{collections::VecDeque, sync::{mpsc::{Receiver, Sender}}, thread, usize};
 use std::net::{UdpSocket, IpAddr};
 use rand::Rng;
 
@@ -89,9 +89,6 @@ fn out_loop (_local_addr: String, cmd_recv: Receiver<PacketCmd>) {
                 if amt != out_buf.len() {
                     panic!("Can not send complete packet!");
                 }
-            }
-            _ => {
-                println!("unknown packet!");
             }
         }
     }

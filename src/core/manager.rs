@@ -304,7 +304,6 @@ impl SocketManager {
                 
                 TaskMsg::OnReceive(packet) => self.handle_receive(packet),
 
-                _ => {}
             }
         }
         
@@ -960,9 +959,6 @@ impl SocketManager {
                 } else {
                     panic!("Wrong state, should not receive FIN packet!");
                 }
-            }
-            _ => {
-                println!("OnReceive(): Undefined packet type!");
             }
         }
     }

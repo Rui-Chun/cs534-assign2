@@ -6,11 +6,6 @@ pub mod core {
     pub mod timer;
 }
 
-pub mod app {
-    mod client;
-    mod server;
-}
-
 
 /* ====== Structures =====
  *  |-- Node.rs : create threds for server or client apps
