@@ -146,17 +146,18 @@ fn exec_transfer (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv
             test_data.push((i % 200) as u8);
         }
         sock1.write_all(&(test_data.clone())).unwrap();
-        thread::sleep(time::Duration::from_millis(100));
+        thread::sleep(time::Duration::from_millis(500));
         sock2.write_all(&test_data).unwrap();
         // quicker sender
-        thread::sleep(time::Duration::from_millis(100));
+        thread::sleep(time::Duration::from_millis(500));
     }
 
     println!("All data sent !!");
-    thread::sleep(time::Duration::from_secs(2));
+    thread::sleep(time::Duration::from_secs(5));
     sock1.close();
-    thread::sleep(time::Duration::from_secs(20));
+    thread::sleep(time::Duration::from_secs(5));
     sock2.close();
+    thread::sleep(time::Duration::from_secs(5));
 
 }
 
@@ -210,11 +211,11 @@ fn exec_server (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: 
                             return;
                         }
                     }
-                    println!("From {}: {} / 20 data confirmed! \n", remote, i + 1);
+                    println!("==========================\nFrom {}: {} / 20 data confirmed! \n", remote, i + 1);
                     // wait
                     thread::sleep(time::Duration::from_millis(10));
                 }
-                println!("From {}: All data right! \n", remote);
+                println!("============================\nFrom {}: All data right! \n", remote);
             });
         }
         // wait
@@ -307,7 +308,7 @@ fn exec_window_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_r
     client_sock.connect(args.local_addr, args.local_port).expect("Can not establish connection.");
 
     // wait for the connection to be established
-    thread::sleep(time::Duration::from_millis(100));
+    thread::sleep(time::Duration::from_millis(500));
 
     // the receiving socket at server
     let server_recv =  server_sock.accept().expect("Can not get connection!");

@@ -460,7 +460,16 @@ impl SocketManager {
         };
         // check whether sending packet is still needed 
         if sock_content.send_buf.is_some() && sock_content.send_base > seq_num {
-            return;
+            // if it is only partly needed
+            if seq_num + len > sock_content.send_base {
+                // update len and start pos
+                len = seq_num + len - sock_content.send_base;
+                seq_num = sock_content.send_base;
+            } else {
+                // otherwise do not retransmit
+                println!("Retrans cancel because low seq_num. ");
+                return;
+            }
         }
 
         // if retransmit SYN
@@ -518,7 +527,7 @@ impl SocketManager {
         println!("cong_window = {}, win_left = {}, len_to_send = {}", sock_content.send_cong_ctrl, win_left, len);
         
         // if window is not large enough
-        if win_left < Self::MSS as isize {
+        if win_left < Self::MSS as isize && !retrans_flag {
             // how many times we have been limited by the window
             sock_content.win_counter =  (sock_content.win_counter + 1) % 50;
             // after ten times limit, try to reach out.

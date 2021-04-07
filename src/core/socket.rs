@@ -197,7 +197,7 @@ impl Socket {
                 pos += amount;
             }
             // wait for the sending
-            thread::sleep(time::Duration::from_millis(10));
+            thread::sleep(time::Duration::from_millis(100));
         }
         return Ok(());
     }
@@ -229,7 +229,7 @@ impl Socket {
                 break;
             }
             // wait for new data
-            thread::sleep(time::Duration::from_millis(10));
+            thread::sleep(time::Duration::from_millis(100));
         }
         return Ok(recv_data);
     }
