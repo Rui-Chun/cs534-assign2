@@ -450,7 +450,7 @@ impl SocketManager {
 
     /// handler for send packets including retransmitting packets
     fn handle_sendnow (&mut self, sock_id: SocketID, ttype: TransType, mut seq_num: u32, mut len: u32, retrans_flag: bool) {
-        // println!("Sending packet {:?} , retrans = {}", ttype, retrans_flag);
+        println!("Sending packet {:?} , retrans = {}", ttype, retrans_flag);
         
         let sock_content = self.socket_map.get_mut(&sock_id);
         let sock_content = if sock_content.is_none() {
@@ -515,7 +515,7 @@ impl SocketManager {
         // how many bytes we can still send?
         let cong_lim = sock_content.send_cong_ctrl as isize + sock_content.send_base as isize - seq_num as isize;
         let win_left = cmp::min(sock_content.send_flow_ctl as isize, cong_lim);
-        // println!("cong_window = {}, win_left = {}, len_to_send = {}", sock_content.send_cong_ctrl, win_left, len);
+        println!("cong_window = {}, win_left = {}, len_to_send = {}", sock_content.send_cong_ctrl, win_left, len);
         
         // if window is not large enough
         if win_left < Self::MSS as isize {
@@ -528,7 +528,7 @@ impl SocketManager {
                 // if it has been transmitted before
                 if time_entry.is_some() {
                     // update timer to transmit later
-                    assert!(time_entry.unwrap().1.is_some());
+                    // assert!(time_entry.unwrap().1.is_some());
                     self.timer_send.send(TimerCmd::New(
                         Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
                         TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
@@ -548,10 +548,15 @@ impl SocketManager {
         }
 
         // update sending length
-        // it needs to be limited by the window, but it can not be zeros
-        len = cmp::min(win_left as u32, len);
-        len = cmp::max(1 as u32, len);
+        // it needs to be limited by the window, but it can not be zeros !
         // otherwise, the empty data packet will repeat itself. scheduled continuously
+        // if this packet has eacaped from above filter.
+        if win_left > Self::MSS as isize {
+            len = cmp::min(win_left as u32, len);
+        }
+        if len == 0{
+            return;
+        }
 
 
         // to send data
@@ -596,8 +601,8 @@ impl SocketManager {
     /// handler function when a packet is received.
     // when ACK is recevied , the data in buf will be sent. The window slides.
     fn handle_receive (&mut self, packet: TransportPacket) {
-        println!("OnReceive(): Got a new packet!");
         let sock_id = packet.get_sock_id();
+        println!("OnReceive(): Got a new packet! from {}:{}", sock_id.remote_addr, sock_id.remote_port);
         let sock_content_ref: &mut SocketContents = 
             // try normal socket first
             if let Some(content) = self.socket_map.get_mut(&sock_id) {
@@ -833,20 +838,31 @@ impl SocketManager {
                             }
                             // update retrans timer, if we have data in buf left unacked
                             if sock_content_ref.send_base < sock_content_ref.send_next {
-                                let new_time_entry = sock_content_ref.packet_times.remove(&sock_content_ref.send_base).unwrap();
-
-                                assert!(new_time_entry.1.is_none());
-                                self.timer_send.send(TimerCmd::New(
-                                    new_time_entry.0 + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
-                                    TaskMsg::SendNow(
-                                        sock_id.clone(), TransType::DATA, sock_content_ref.send_base, 
-                                        sock_content_ref.send_next - sock_content_ref.send_base,
-                                        true
-                                    )
-                                )).unwrap();
-                                // put back the packet records!
-                                let ttoken = self.ttoken_recv.recv().unwrap();
-                                sock_content_ref.packet_times.insert(sock_content_ref.send_base, (new_time_entry.0, Some(ttoken)));
+                                // it may or may not has been transmitted
+                                let new_time_entry = sock_content_ref.packet_times.remove(&sock_content_ref.send_base);
+                                if new_time_entry.is_some() {
+                                    assert!(new_time_entry.unwrap().1.is_none());
+                                    // update timer
+                                    self.timer_send.send(TimerCmd::New(
+                                        new_time_entry.unwrap().0 + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
+                                        TaskMsg::SendNow(
+                                            sock_id.clone(), TransType::DATA, sock_content_ref.send_base, 
+                                            sock_content_ref.send_next - sock_content_ref.send_base,
+                                            true
+                                        )
+                                    )).unwrap();
+                                    // put back the packet records!
+                                    let ttoken = self.ttoken_recv.recv().unwrap();
+                                    sock_content_ref.packet_times.insert(sock_content_ref.send_base, (new_time_entry.unwrap().0, Some(ttoken)));
+                                }
+                                // the new send base has not been sent before
+                                else {
+                                    self.timer_send.send(TimerCmd::New(
+                                        Instant::now() + sock_content_ref.rtt * Self::TIMEOUT_MULTI, 
+                                        TaskMsg::SendNow(sock_id.clone(), TransType::DATA, 
+                                                        sock_content_ref.send_base, sock_content_ref.send_next - sock_content_ref.send_base, false)
+                                    )).unwrap();
+                                }
                             }
                         }
                     }

@@ -189,6 +189,7 @@ impl Socket {
         let mut len = buf.len();
         loop {
             let amount = self.write(buf, pos, len).unwrap();
+            println!("Wrote {} bytes, left len = {}", amount, len);
             if amount == len {
                 break;
             } else {

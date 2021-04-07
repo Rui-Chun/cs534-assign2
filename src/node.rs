@@ -139,19 +139,23 @@ fn exec_transfer (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv
 
     thread::sleep(time::Duration::from_millis(1000));
 
-    for _ in 0..20 {
+    for i in 0..20 {
+        println!("Sending loop {} / 20 starts ...", i);
         let mut test_data = Vec::new();
         for i in 0..2000 {
             test_data.push((i % 200) as u8);
         }
-        sock1.write_all(&test_data).unwrap();
+        sock1.write_all(&(test_data.clone())).unwrap();
+        thread::sleep(time::Duration::from_millis(100));
         sock2.write_all(&test_data).unwrap();
         // quicker sender
-        thread::sleep(time::Duration::from_millis(5));
+        thread::sleep(time::Duration::from_millis(100));
     }
 
+    println!("All data sent !!");
+    thread::sleep(time::Duration::from_secs(2));
     sock1.close();
-    thread::sleep(time::Duration::from_secs(10));
+    thread::sleep(time::Duration::from_secs(20));
     sock2.close();
 
 }
@@ -197,14 +201,16 @@ fn exec_server (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv: 
             let remote = format!("{}:{}", server_recv.id.remote_addr, server_recv.id.remote_port);
             println!("Got a new connection from {}", remote);
             thread::spawn(move || {
-                for _ in 0..20 {
+                println!("A new thread !");
+                for i in 0..20 {
                     let recv_data = server_recv.read_all(2000).unwrap();       
-                    for i in 0..2000 {
-                        if recv_data[i] != (i % 200) as u8 {
-                            println!("From {}: Wring data received !!!", remote);
+                    for j in 0..2000 {
+                        if recv_data[j] != (j % 200) as u8 {
+                            println!("From {}: Wrong data received !!!", remote);
                             return;
                         }
                     }
+                    println!("From {}: {} / 20 data confirmed! \n", remote, i + 1);
                     // wait
                     thread::sleep(time::Duration::from_millis(10));
                 }
