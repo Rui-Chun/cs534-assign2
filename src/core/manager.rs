@@ -81,7 +81,7 @@ impl SocketContents {
             } else if self.recv_buf.is_some() {
                 socket_type = "receiver".to_string();
             }
-            let log_name = format!("./target/logs/Log-{}:{}-{}", sock_id.local_addr, sock_id.local_port, socket_type);
+            let log_name = format!("./target/logs/Log-{}:{}-from-{}:{}-{}", sock_id.local_addr, sock_id.local_port, sock_id.remote_addr, sock_id.remote_port, socket_type);
             self.log_file = Some(File::create(log_name).unwrap());
         }
 
