@@ -526,7 +526,7 @@ impl SocketManager {
         println!("cong_window = {}, win_left = {}, len_to_send = {}", sock_content.send_cong_ctrl, win_left, len);
         
         // if window is not large enough
-        if win_left < Self::MSS as isize && !retrans_flag {
+        if win_left < Self::MSS as isize {
             // how many times we have been limited by the window
             sock_content.win_counter =  (sock_content.win_counter + 1) % 50;
             // after ten times limit, try to reach out.
@@ -561,6 +561,8 @@ impl SocketManager {
         // if this packet has eacaped from above filter.
         if win_left > Self::MSS as isize {
             len = cmp::min(win_left as u32, len);
+        } else {
+            len = cmp::min(Self::MSS as u32, len);
         }
         if len == 0{
             return;
