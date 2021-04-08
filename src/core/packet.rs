@@ -90,7 +90,7 @@ impl TransportPacket {
      *        payload <= MAX_PAYLOAD_SIZE bytes
      * @return A byte[] for transporting over the wire. Null if failed to pack for some reason
      */
-    pub fn pack (mut self) -> Vec<u8> {
+    pub fn pack (self) -> Vec<u8> {
         let mut packet: Vec<u8> = Vec::with_capacity(TransportPacket::MAX_PACKET_SIZE as usize);
 
         packet.push(self.src_port);

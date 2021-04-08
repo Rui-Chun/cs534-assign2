@@ -118,7 +118,6 @@ pub enum TaskMsg {
     /// schedule a sending task
     /// (sock_id, trans_type, seq_start, len, retrans_flag)
     SendNow(SocketID,TransType, u32, u32, bool),
-
 }
 
 // return values for socket task

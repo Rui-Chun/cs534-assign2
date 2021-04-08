@@ -14,7 +14,8 @@ pub enum SocketState {
     LISTEN,
     SYN_SENT,
     ESTABLISHED,
-    /// We need to close, but still work to do.
+    /// We need to close, but still work to do. 
+    /// When the receiver reveived FIN, but has still data not read by the user.
     SHUTDOWN,
     /// wait for all the packets to be acked, so that we can send FIN
     FIN_WAIT,
