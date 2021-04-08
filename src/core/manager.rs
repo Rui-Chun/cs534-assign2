@@ -581,6 +581,8 @@ impl SocketManager {
         // if this packet has eacaped from above filter.
         if win_left > Self::MSS as isize {
             len = cmp::min(win_left as u32, len);
+        } else {
+            len = cmp::min(Self::MSS as u32, len);
         }
         if len == 0{
             println!("transmission canceled due to zero len");
