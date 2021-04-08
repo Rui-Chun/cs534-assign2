@@ -8,7 +8,7 @@ use super::manager::TaskMsg;
 
 const UDP_IN_PORT: usize = 8848;
 const UDP_OUT_PORT: usize = 8888;
-const SIM_LOSS_RATE: f64 = 0.0;
+const SIM_LOSS_RATE: f64 = 0.05;
 // the manager sends the packet commands to the udp thread
 #[derive(Clone)]
 pub enum PacketCmd {
@@ -55,7 +55,7 @@ fn out_loop (_local_addr: String, cmd_recv: Receiver<PacketCmd>) {
                 }
             }
             PacketCmd::ACK(id, window, seq_num) => {
-                println!("UDP: ACK sending...");
+                println!("UDP: ACK sending... seq_num = {}", seq_num);
                 let socket = UdpSocket::bind(format!("{}:{}", id.local_addr, UDP_OUT_PORT)).unwrap();
                 // with window and seq_num, no payload
                 let packet = TransportPacket::new(id.local_port, id.remote_port, 
@@ -67,7 +67,7 @@ fn out_loop (_local_addr: String, cmd_recv: Receiver<PacketCmd>) {
                 }
             }
             PacketCmd::DATA(id, seq_num, data) => {
-                println!("UDP: DATA sending...");
+                println!("UDP: DATA sending ... seq_num = {}", seq_num);
                 let socket = UdpSocket::bind(format!("{}:{}", id.local_addr, UDP_OUT_PORT)).unwrap();
                 // with window and seq_num, no payload
                 let packet = TransportPacket::new(id.local_port, id.remote_port, 

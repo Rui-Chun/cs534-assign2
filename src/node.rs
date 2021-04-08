@@ -242,7 +242,7 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
     let server_recv =  server_sock.accept().expect("Can not get connection!");
 
     // interleaved test
-    for _ in 0..20 {
+    for _ in 0..100 {
         let mut test_data = Vec::new();
         for i in 0..200 {
             test_data.push(i as u8);
@@ -253,7 +253,7 @@ fn exec_local_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_re
         // wait
         thread::sleep(time::Duration::from_millis(100));
 
-        let recv_data = server_recv.read(200).unwrap();
+        let recv_data = server_recv.read_all(200).unwrap();
 
         for i in 0..200 {
             assert!(recv_data[i] == i as u8);
@@ -315,7 +315,8 @@ fn exec_window_test (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_r
 
     // flow control test
     thread::spawn(move || {
-        for _ in 0..40 {
+        for idx in 0..40 {
+            println!("{} over 40 ", idx);
             let mut test_data = Vec::new();
             for i in 0..200 {
                 test_data.push(i as u8);

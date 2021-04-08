@@ -358,7 +358,7 @@ impl SocketManager {
     /// handler function when read API is called
     fn handle_read (&mut self, sock_id: SocketID, len: u32) {
         let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
-
+        println!("Read() : recv_base = {}, recv_next = {}, len = {}", sock_content.recv_base, sock_content.recv_next, len);
         // derive the byte num to read
         let buf_left = sock_content.recv_next - sock_content.recv_base;
         let to_read = cmp::min(buf_left, len) as usize;
@@ -449,14 +449,14 @@ impl SocketManager {
 
     /// handler for send packets including retransmitting packets
     fn handle_sendnow (&mut self, sock_id: SocketID, ttype: TransType, mut seq_num: u32, mut len: u32, retrans_flag: bool) {
-        println!("Sending packet {:?} , retrans = {}", ttype, retrans_flag);
-        
         let sock_content = self.socket_map.get_mut(&sock_id);
         let sock_content = if sock_content.is_none() {
             return;
         } else {
             sock_content.unwrap()
         };
+        println!("Sending packet {:?} , send_base = {}, recv+bse = {}, seq_num = {}, len = {}, retrans = {}", ttype, sock_content.send_base, sock_content.recv_base, seq_num, len, retrans_flag);
+
         // check whether sending packet is still needed 
         if sock_content.send_buf.is_some() && sock_content.send_base > seq_num {
             // if it is only partly needed
@@ -530,27 +530,28 @@ impl SocketManager {
             // how many times we have been limited by the window
             sock_content.win_counter =  (sock_content.win_counter + 1) % 50;
             // after ten times limit, try to reach out.
+            // this is useful when one ACK is dropped. And each side is waiting for the other side to move first.
             if sock_content.win_counter != 0 {
 
-                let time_entry = sock_content.packet_times.remove(&seq_num);
-                // if it has been transmitted before
-                if time_entry.is_some() {
+                // The send base
+                if retrans_flag || sock_content.send_base == seq_num {
                     // update timer to transmit later
-                    // assert!(time_entry.unwrap().1.is_some());
+                    println!("Retrans timer set up.");
                     self.timer_send.send(TimerCmd::New(
                         Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
                         TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
                     )).unwrap();
+
+                    // this packet_times is used for rtt estimation and timer cancelation, if not transmited yet.
+                    // we do not need update it.
                     let ttoken = self.ttoken_recv.recv().unwrap();
-                    sock_content.packet_times.insert(seq_num, (time_entry.unwrap().0, Some(ttoken)));
+                    let time_entry = sock_content.packet_times.remove(&seq_num);
+                    // if it has been transmitted before
+                    if time_entry.is_some() {
+                        sock_content.packet_times.insert(seq_num, (time_entry.unwrap().0, Some(ttoken)));
+                    }
                 }
-                // if it is the first transmission, no time entry 
-                else {
-                    self.timer_send.send(TimerCmd::New(
-                        Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
-                        TaskMsg::SendNow(sock_id.clone(), ttype.clone(), seq_num, len, retrans_flag)
-                    )).unwrap();
-                }
+
                 return;
             }
         }
@@ -565,6 +566,7 @@ impl SocketManager {
             len = cmp::min(Self::MSS as u32, len);
         }
         if len == 0{
+            println!("transmission canceled due to zero len");
             return;
         }
 
@@ -572,6 +574,7 @@ impl SocketManager {
         // to send data
         // send packets until done
         loop {
+            println!("Looping ... ");
             let to_send = cmp::min(packet::TransportPacket::MAX_PAYLOAD_SIZE, len as usize);
             let data = sock_content.send_buf.as_mut().unwrap().make_contiguous();
             let start_index = (seq_num - sock_content.send_base) as usize;

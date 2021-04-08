@@ -1,0 +1,278 @@
+Starting a Transport Node!
+Window Test started ...
+New(): new socket created!
+Bind(): local port 88 binded.
+Listen(): start listening ...
+New(): new socket created!
+Bind(): local port 89 binded.
+Sending packet SYN , send_base = 284, recv+bse = 0, seq_num = 284, len = 0, retrans = false
+UDP: SYN sending...
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a SYN packet!
+OnReceive(): New socket pushed to backlog!
+UDP: ACK sending... seq_num = 285
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 4000
+OnReceive(): New connection established!
+Sending packet DATA , send_base = 285, recv+bse = 0, seq_num = 285, len = 200, retrans = false
+cong_window = 20002, win_left = 4000, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 285
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 485
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 3800
+Sending packet DATA , send_base = 485, recv+bse = 0, seq_num = 485, len = 200, retrans = false
+cong_window = 20003, win_left = 3800, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 485
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 685
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 3600
+Sending packet DATA , send_base = 685, recv+bse = 0, seq_num = 685, len = 200, retrans = false
+cong_window = 20004, win_left = 3600, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 685
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 885
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 3400
+Sending packet DATA , send_base = 885, recv+bse = 0, seq_num = 885, len = 200, retrans = false
+cong_window = 20005, win_left = 3400, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 885
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 1085
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 3200
+Sending packet DATA , send_base = 1085, recv+bse = 0, seq_num = 1085, len = 200, retrans = false
+cong_window = 20006, win_left = 3200, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 1085
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 1285
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 3000
+Sending packet DATA , send_base = 1285, recv+bse = 0, seq_num = 1285, len = 200, retrans = false
+cong_window = 20007, win_left = 3000, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 1285
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 1485
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 2800
+Sending packet DATA , send_base = 1485, recv+bse = 0, seq_num = 1485, len = 200, retrans = false
+cong_window = 20008, win_left = 2800, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 1485
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 1685
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 2600
+Sending packet DATA , send_base = 1685, recv+bse = 0, seq_num = 1685, len = 200, retrans = false
+cong_window = 20009, win_left = 2600, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 1685
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 1885
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 2400
+Len = 200 wrote 
+Sending packet DATA , send_base = 1885, recv+bse = 0, seq_num = 1885, len = 200, retrans = false
+cong_window = 20010, win_left = 2400, len_to_send = 200
+UDP: DATA sending ... seq_num = 1885
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 2085
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 2200
+Sending packet DATA , send_base = 2085, recv+bse = 0, seq_num = 2085, len = 200, retrans = false
+cong_window = 20011, win_left = 2200, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 2085
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 2285
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 2200
+Sending packet DATA , send_base = 2285, recv+bse = 0, seq_num = 2285, len = 200, retrans = false
+cong_window = 20012, win_left = 2200, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 2285
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 2485
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 2000
+Sending packet DATA , send_base = 2485, recv+bse = 0, seq_num = 2485, len = 200, retrans = false
+cong_window = 20013, win_left = 2000, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 2485
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 2685
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 1800
+Sending packet DATA , send_base = 2685, recv+bse = 0, seq_num = 2685, len = 200, retrans = false
+cong_window = 20014, win_left = 1800, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 2685
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 2885
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 1600
+Sending packet DATA , send_base = 2885, recv+bse = 0, seq_num = 2885, len = 200, retrans = false
+cong_window = 20015, win_left = 1600, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 2885
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 3085
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 1400
+Sending packet DATA , send_base = 3085, recv+bse = 0, seq_num = 3085, len = 200, retrans = false
+cong_window = 20016, win_left = 1400, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 3085
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 3285
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 1200
+Sending packet DATA , send_base = 3285, recv+bse = 0, seq_num = 3285, len = 200, retrans = false
+cong_window = 20017, win_left = 1200, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 3285
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 3485
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 1000
+Sending packet DATA , send_base = 3485, recv+bse = 0, seq_num = 3485, len = 200, retrans = false
+cong_window = 20018, win_left = 1000, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 3485
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 3685
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 800
+Sending packet DATA , send_base = 3685, recv+bse = 0, seq_num = 3685, len = 200, retrans = false
+cong_window = 20019, win_left = 800, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 3685
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 3885
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 600
+Sending packet DATA , send_base = 3885, recv+bse = 0, seq_num = 3885, len = 200, retrans = false
+cong_window = 20020, win_left = 600, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 3885
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 4085
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 400
+Sending packet DATA , send_base = 4085, recv+bse = 0, seq_num = 4085, len = 200, retrans = false
+cong_window = 20021, win_left = 400, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 4085
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 4285
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 200
+Sending packet DATA , send_base = 4285, recv+bse = 0, seq_num = 4285, len = 200, retrans = false
+cong_window = 20022, win_left = 200, len_to_send = 200
+Len = 200 wrote 
+UDP: DATA sending ... seq_num = 4285
+Got packet, Len = 212
+OnReceive(): Got a new packet! from 127.0.0.1:89
+OnReceive(): Got a DATA packet!
+UDP: ACK sending... seq_num = 4485
+Got packet, Len = 12
+OnReceive(): Got a new packet! from 127.0.0.1:88
+OnReceive(): Got a ACK packet!
+New flow control window = 0
+Sending packet DATA , send_base = 4485, recv+bse = 0, seq_num = 4485, len = 200, retrans = false
+cong_window = 20023, win_left = 0, len_to_send = 200
+Retrans timer set up.
+Len = 200 wrote 
+Sending packet DATA , send_base = 4485, recv+bse = 0, seq_num = 4685, len = 200, retrans = false
+cong_window = 20023, win_left = 0, len_to_send = 200
+Len = 200 wrote 
