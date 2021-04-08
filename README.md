@@ -205,12 +205,90 @@ Your design can be extended in multiple directions to integrate modern features.
 
 1. Multipath TCP API and protocol: Your current API is the basic socket API. In class, we discussed multi-path TCP. How may you extend your socket to allow multi-path API? Please (1) specify the issues of existing API to support multipath TCP, (2) list the new API, clearly marking modifications and/or additions to the API, (3) give an example of client and server programs using your multi-path TCP API, and (4) briefly describe how your implementation (protocol format, server, client) will be changed to support multipath TCP. For this design exercise, you can assume bi-directional transport.
 
-    (1) 
+    (1)(2) First, we would need to keep socket interface to provide the same service to the applications that are unaware of multipath tcp or still want to access the socket interface. Then, we need to provide extra APIs for MPTCP-aware applications. Based on RFC6897, we need at least these socket operations for MPTCP.
+    - TCP_MULTIPATH_ENABLE: This value should only be set before the
+      establishment of a TCP connection.  Its value should only be read
+      after the establishment of a connection.
 
+    - TCP_MULTIPATH_ADD: This operation can be applied both before
+      connection setup and during a connection.  If used before, it
+      controls the local addresses that an MPTCP connection can use.  In
+      the latter case, it allows MPTCP to use an additional local
+      address, if there has been a restriction before connection setup.
+
+    - TCP_MULTIPATH_REMOVE: This operation can be applied both before
+      connection setup and during a connection.  In both cases, it
+      removes an address from the list of local addresses that may be
+      used by subflows.
+      
+    - TCP_MULTIPATH_SUBFLOWS: This value is read-only and can only be
+      used after connection setup.
+
+    - TCP_MULTIPATH_CONNID: This value is read-only and should only be
+      used after connection setup.
+
+    ```
+    +------------------------+-----+-----+------------------------------+
+    | Name                   | Get | Set |           Data type          |
+    +------------------------+-----+-----+------------------------------+
+    | TCP_MULTIPATH_ENABLE   |  o  |  o  |           boolean            |
+    | TCP_MULTIPATH_ADD      |     |  o  |      list of addresses       |
+    |                        |     |     |         (and ports)          |
+    | TCP_MULTIPATH_REMOVE   |     |  o  |      list of addresses       |
+    |                        |     |     |         (and ports)          |
+    | TCP_MULTIPATH_SUBFLOWS |  o  |     |  list of pairs of addresses  |
+    |                        |     |     |         (and ports)          |
+    | TCP_MULTIPATH_CONNID   |  o  |     |           integer            |
+    +------------------------+-----+-----+------------------------------+
+    ```
+
+    To provide the setting above, I need to add the following API. 
+    ```
+    fn set_multipath_enable (&self, mp_enable: bool);
+    fn add_multipath (&self, path: IpAddr, port: u32);
+    fn remove_multipath (&self, path: IpAddr, port: u32);
+    fn get_multipath_flows (&self) -> Vec<SubFlow>; // this returns a list pairs of addresses
+    fn get_multipath_connid (&self) -> u32; // returns the unique mptcp id 
+    ```
+
+    (2) example of using the API
+    ```
+    let mut server_sock = Socket::new();
+    server_sock.set_multipath_enable(true); // turn on MPTCP
+    server_sock.add_multipath(192.168.10.10, 80);
+    server_sock.add_multipath(192.168.0.10, 80); // add multiple paths
+    server_sock.listen(args.backlog).expect("Can not listen to port!"); // set backlog
+
+    let mut client_sock = Socket::new();
+    client_sock.set_multipath_enable(true); // turn on MPTCP
+    client_sock.add_multipath(192.168.10.11, 80);
+    client_sock.add_multipath(192.168.0.11, 80); // add multiple paths
+    client_sock.connect(args.remote_addr, args.remote_port).expect("Can not establish connection.");
+
+    let server_recv = server_sock.accept();
+
+    client_sock.write(...);
+    server_recv.read(...);
+
+    // close all
+    client_sock.close();
+    server_sock.close();
+    server_recv.close();
+
+    ```
+
+    (4) I would need to add new data structures to represent different subflows. Inside each socket struct, it will contain multiple subflows. Server and client program would need algorithms to select the optimal flow to deliver data. 
 
 2. Secure Transport API and protocol: One direction of modern transport design is the integration (e.g., in QUIC) of basic transport (TCP) and security (e.g., TLS). Please provide a basic, high-level API and protocol design which integrates basic transport and TLS security.
 
+    ```
+
+    ```
+
+
 
 3. Congestion Control: Please describe the modification of your code (as concrete as you can) to implement TCP Cubic congestion control. Please describe briefly how your code can be extended to use Google's BBR v1 congestion control.
+
+    To implement TCP Cubic congestion control,  
 
 4. Delivery Flexibilities: Some major networks (e.g., Amazon Scalable Reliable Datagram) propose that the network does not enforce in-order delivery. Please describe how you may design a flexible API and protocol so that the transport can provide flexibilities such as delivery order (segments can be delivered to applications not in order) and reliability semantics/flexibilities (e.g., some packets do not need reliability, and one can use FEC to correct errors instead of using retransmissions).
