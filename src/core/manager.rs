@@ -331,7 +331,7 @@ impl SocketManager {
     /// this function is non-blocking, only copy the buffer
     fn handle_write (&mut self, sock_id: SocketID, buf: Vec<u8>, pos: u32, len: u32) {
         let sock_content = self.socket_map.get_mut(&sock_id).unwrap();
-
+        println!("Write(): send_base = {}, send_next = {}, len = {}", sock_content.send_base, sock_content.send_next, len);
         if sock_content.state != SocketState::ESTABLISHED {
             // send ret value
             sock_content.send_ret(TaskRet::Write(Err(-1))).unwrap();
@@ -455,7 +455,7 @@ impl SocketManager {
         } else {
             sock_content.unwrap()
         };
-        println!("Sending packet {:?} , send_base = {}, recv+bse = {}, seq_num = {}, len = {}, retrans = {}", ttype, sock_content.send_base, sock_content.recv_base, seq_num, len, retrans_flag);
+        println!("Sending packet {:?} , send_base = {}, send_next = {}, seq_num = {}, len = {}, retrans = {}", ttype, sock_content.send_base, sock_content.send_next, seq_num, len, retrans_flag);
 
         // check whether sending packet is still needed 
         if sock_content.send_buf.is_some() && sock_content.send_base > seq_num {
@@ -467,6 +467,25 @@ impl SocketManager {
             } else {
                 // otherwise do not retransmit
                 println!("Retrans cancel because low seq_num. ");
+                // but we need to set up the new timer at send base ...
+
+                // this packet_times is used for rtt estimation and timer cancelation, if not transmited yet.
+                // we do not need update it.
+                let time_entry = sock_content.packet_times.remove(&seq_num);
+                // if it has been transmitted before
+                if time_entry.is_some() {
+                    self.timer_send.send(TimerCmd::New(
+                        Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
+                        TaskMsg::SendNow(sock_id.clone(), ttype.clone(), sock_content.send_base, sock_content.send_next - sock_content.send_base, true)
+                    )).unwrap();
+                    let ttoken = self.ttoken_recv.recv().unwrap();
+                    sock_content.packet_times.insert(seq_num, (time_entry.unwrap().0, Some(ttoken)));
+                } else {
+                    self.timer_send.send(TimerCmd::New(
+                        Instant::now() + sock_content.rtt * Self::TIMEOUT_MULTI, 
+                        TaskMsg::SendNow(sock_id.clone(), ttype.clone(), sock_content.send_base, sock_content.send_next - sock_content.send_base, false)
+                    )).unwrap();
+                }
                 return;
             }
         }
@@ -562,8 +581,6 @@ impl SocketManager {
         // if this packet has eacaped from above filter.
         if win_left > Self::MSS as isize {
             len = cmp::min(win_left as u32, len);
-        } else {
-            len = cmp::min(Self::MSS as u32, len);
         }
         if len == 0{
             println!("transmission canceled due to zero len");
@@ -698,7 +715,7 @@ impl SocketManager {
                 } 
             }
             TransType::ACK => {
-                println!("OnReceive(): Got a ACK packet!");
+                println!("OnReceive(): Got a ACK packet! seq {}", packet.get_seq_num());
                 // update flow control window
                 sock_content_ref.send_flow_ctl = packet.get_wind() as usize;
                 println!("New flow control window = {}", sock_content_ref.send_flow_ctl);

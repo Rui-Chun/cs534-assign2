@@ -8,7 +8,7 @@ use super::manager::TaskMsg;
 
 const UDP_IN_PORT: usize = 8848;
 const UDP_OUT_PORT: usize = 8888;
-const SIM_LOSS_RATE: f64 = 0.05;
+const SIM_LOSS_RATE: f64 = 0.0;
 // the manager sends the packet commands to the udp thread
 #[derive(Clone)]
 pub enum PacketCmd {

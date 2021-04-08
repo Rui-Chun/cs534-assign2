@@ -139,25 +139,39 @@ fn exec_transfer (args: NodeArgs, task_sender: Sender<TaskMsg>, ret_channel_recv
 
     thread::sleep(time::Duration::from_millis(1000));
 
-    for i in 0..20 {
-        println!("Sending loop {} / 20 starts ...", i);
-        let mut test_data = Vec::new();
-        for i in 0..2000 {
-            test_data.push((i % 200) as u8);
+    let handle1 = thread::spawn(move || {
+        for i in 0..20 {
+            println!("Thread 0: Sending loop {} / 20 starts ...", i);
+            let mut test_data = Vec::new();
+            for i in 0..2000 {
+                test_data.push((i % 200) as u8);
+            }
+            sock1.write_all(&(test_data.clone())).unwrap();
+            thread::sleep(time::Duration::from_millis(500));
         }
-        sock1.write_all(&(test_data.clone())).unwrap();
-        thread::sleep(time::Duration::from_millis(500));
-        sock2.write_all(&test_data).unwrap();
-        // quicker sender
-        thread::sleep(time::Duration::from_millis(500));
-    }
+        println!("Thread 0: All data sent !!");
+        thread::sleep(time::Duration::from_secs(5));
+        sock1.close();
+    });
 
-    println!("All data sent !!");
-    thread::sleep(time::Duration::from_secs(5));
-    sock1.close();
-    thread::sleep(time::Duration::from_secs(5));
-    sock2.close();
-    thread::sleep(time::Duration::from_secs(5));
+    let handle2 = thread::spawn(move || {
+        for i in 0..20 {
+            println!("Thread 1: Sending loop {} / 20 starts ...", i);
+            let mut test_data = Vec::new();
+            for i in 0..2000 {
+                test_data.push((i % 200) as u8);
+            }
+            sock2.write_all(&(test_data.clone())).unwrap();
+            thread::sleep(time::Duration::from_millis(500));
+        }
+        println!("Thread 1: All data sent !!");
+        thread::sleep(time::Duration::from_secs(5));
+        sock2.close();
+    });
+
+    thread::sleep(time::Duration::from_secs(20));
+    handle1.join().unwrap();
+    handle2.join().unwrap();
 
 }
 
