@@ -60,15 +60,15 @@ Second, when the manager thread starts, it will also bring up *the timer thread*
 ### Disscussions of design
 1. Diss1a: Your transport protocol implementation picks an initial sequence number when establishing a new connection. This might be 1, or it could be a random value. Which is better, and why?
 
-I chose a random number as the initial sequence number. It seems better than 1 because it makes sure that the ack from the server side is fresh.
+    I chose a random number as the initial sequence number. It seems better than 1 because it makes sure that the ack from the server side is fresh.
 
 2. Diss1b: Our connection setup protocol is vulnerable to the following attack. The attacker sends a large number of connection request (SYN) packets to a particular node, but never sends any data. (This is called a SYN flood.) What happens to your implementation if it were attacked in this way? How might you have designed the initial handshake protocol (or the protocol implementation) differently to be more robust to this attack?
 
-If all the SYNs are from the same port, one connection will be established and that is all. All the following SYN will be ignored. If SYN are from different ports, only limited number of new connections will be established, because the number of backlog is limited. To prevent the attacker from using up the backlog, we can limit the number of SYN accepted from the same ip addr at a certain period of time, assuming that the attacker can not easily get a large number of ip addresses. 
+    If all the SYNs are from the same port, one connection will be established and that is all. All the following SYN will be ignored. If SYN are from different ports, only limited number of new connections will be established, because the number of backlog is limited. To prevent the attacker from using up the backlog, we can limit the number of SYN accepted from the same ip addr at a certain period of time, assuming that the attacker can not easily get a large number of ip addresses. 
 
 1. Diss1c: What happens in your implementation when a sender transfers data but never closes a connection? (This is called a FIN attack.) How might we design the protocol differently to better handle this case?
 
-Given my current design, this will leave a connection open infinitely. This is undesriable. We could potentially use time out to regulate the max duration of an idle connection.
+    Given my current design, this will leave a connection open infinitely. This is undesriable. We could potentially use time out to regulate the max duration of an idle connection.
 
 ### Implementation Details
 1. `The socket manager` struct mantains a task queue to hold all the tasks to handle. I reused the inter-thread communication channel/pipe as the queue. Since the message in the channel is also FIFO. Rust enum can hold various types of values, so I use this to hold all the task arguments for socket APIs and other tasks.
@@ -173,7 +173,7 @@ As the outputs show, all the data packet will get an ACK, and retransmit if it i
 ### Disscussions of design
 1. Diss2: Your transport protocol implementation picks the size of a buffer for received data that is used as part of flow control. How large should this buffer be, and why?
 
-The buffer should be at least larger than the max size of one packet. So the packet delivery can move forword. Ideally, the larger the buffer is, the more efficient the transport would be. Because a large buffer can endure bursts of received packets without telling the sender to slow down.
+    The buffer should be at least larger than the max size of one packet. So the packet delivery can move forword. Ideally, the larger the buffer is, the more efficient the transport would be. Because a large buffer can endure bursts of received packets without telling the sender to slow down.
 
 ### Details fo design
 Several varibales inside the socket content are used for flow and congestion control. 
@@ -281,14 +281,58 @@ Your design can be extended in multiple directions to integrate modern features.
 
 2. Secure Transport API and protocol: One direction of modern transport design is the integration (e.g., in QUIC) of basic transport (TCP) and security (e.g., TLS). Please provide a basic, high-level API and protocol design which integrates basic transport and TLS security.
 
-    ```
+    The main reference for my answer is [`The Secure Socket API: TLS as an Operating System Service`](https://www.usenix.org/system/files/conference/usenixsecurity18/sec18-o_neill.pdf) in NSDI'18. It seems a good fit for what we are looking for.
 
-    ```
+    We can build all TLS functionality directly into the POSIX socket API. The `socket()` API accepts a argument to specify the protocol. So we can add special protocol to integrate TLS by specifying the protocol as `IPPROTO_TLS`. Then we can define special behaviors under IPPROTO TLS for all the socket APIs. 
 
+    - For `connect()`, it perform a connection using underlying transport protocol (e.g., TCP handshake), and perform the TLS hand-shake (client-side) with the specified remote address.
+    - For `accept()`, it gets a connection request from the pending connections, perform the TLS handshake (server-side) with the remote endpoint, and creates a new socket descriptor.
+    - For `read()` and `recv()`, it encrypts/decrypts and transmit/receive data to a remote endpoint.
+    - For `close()`, it closes a socket, sends a TLS close notify, and tears down connection, if applicable.
+
+    An additional configuration file can be used to gain control over TLS parameters. Some options are listed below.
+    - TLS Version: Select which TLS versions to enable
+    - Cipher Suites: Select which cipher suites to enable, in order of preference 
+    - Certificate Validation: Select active certificate validation mechanisms and strengthening technologies.
+    - And so on
 
 
 3. Congestion Control: Please describe the modification of your code (as concrete as you can) to implement TCP Cubic congestion control. Please describe briefly how your code can be extended to use Google's BBR v1 congestion control.
 
-    To implement TCP Cubic congestion control,  
+    To implement TCP Cubic congestion control,
+    - Basic reduction, when three duplicate ACKs
+        ```
+        self.w_max = self.cwnd; // save window size before reduction
+        self.ssthresh = max(2, self.cwnd * Self::beta_cubic); // new slow start threshhold
+        self.cwnd = Self::beta_cubic * self.cwnd; // multiplicative decrease
+        self.t = 0; // reset time
+        ```
+    - Fast Convergence, to update w_max 
+        ```
+        if self.w_max < self.w_last_max {
+            self.w_last_max = self.w_max; // remember last w max
+            self.w_max = self.w_max * (1 + Self::beta_cubic ) / 2; // further reduce w_max
+        } else {
+            self.w_last_max = self.w_max;
+        }
+        ```
+    - Congestion avoidance, after receiving an ACK
+        ```
+        self.t += self.rtt / self.cwnd; // update time, this is an inaccurate estimation
+        let K = cubic_root( self.w_max * (1 - Self::beta_cubic) / C ); 
+
+        w_cubic = C * (self.t - K) ^ 3 + self.w_max; // new cubic window
+        w_cubic_rtt = C * ((self.t + self.rtt) - K) ^ 3 + self.w_max;
+        self.w_est = self.w_max * Self::beta_cubic + 
+                     3 * (1-Self::beta_cubic) / (1+Self::beta_cubic) * (t / self.rtt);
+
+        // update window
+        if self.w_cubic < self.w_est {
+            self.cwnd = self.w_est;
+        } else {
+            self.cwnd += (w_cubic_rtt - self.cwnd) / self.cwnd; // update window size
+        }
+        ```
+    
 
 4. Delivery Flexibilities: Some major networks (e.g., Amazon Scalable Reliable Datagram) propose that the network does not enforce in-order delivery. Please describe how you may design a flexible API and protocol so that the transport can provide flexibilities such as delivery order (segments can be delivered to applications not in order) and reliability semantics/flexibilities (e.g., some packets do not need reliability, and one can use FEC to correct errors instead of using retransmissions).
