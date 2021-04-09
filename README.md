@@ -1,21 +1,22 @@
 # CS434/534 Programming Assignment 2: Network Transport
-This serves as the report for this assignment.
+This document serves as the report for this assignment.
+
+**Author:** Ruichun Ma (ruichun.ma@yale.edu)
 
 **File Descriptions**
 ```
 |-- src
-|    |-- node.rs : The executable program. Run this to start a transport node.
-|    |-- lib.rs : The lib for all modules needed for my transport protocol implementation.
-|    |-- core : The folder holds all modules of the lib.
-|         |-- socket.rs : The socket API used by node.rs . All basic methods are non-blocking.
-|         |-- manager.rs : The manager struct to govern all the sockets. It communicates with the timer
-|         |                and udp sender and receiver.
-|         |-- packet.rs : The transport packet format and some helper functions.
-|         |-- timer.rs : The timer struct for setting up timeout.
-|         |-- udp_utils.rs : The underlaying udp sender and receiver.
+|    |--node.rs: The executable program. Run this to start a transport node.
+|    |--lib.rs: The lib for all modules needed for my transport protocol implementation.
+|    |--core: The folder holds all modules of the lib.
+|         |--socket.rs: The non-blocking socket API used by node.rs.
+|         |--manager.rs: The manager struct to govern all the sockets, the timer and udp sender and receiver.
+|         |--packet.rs: The transport packet format and some helper functions.
+|         |--timer.rs: The timer struct for setting up timeout.
+|         |--udp_utils.rs: The underlaying udp sender and receiver.
 |-- target
-|    |-- debug : The compiled program. This one only wroks for macos x86_64.
-|    |-- logs : The logs for each socket, recording packets sent or recv.
+|    |--debug: The compiled program. This one only wroks for macos x86_64.
+|    |--logs: The logs for each socket, recording packets sent or recv.
 ```
 
 ## To Run
@@ -55,7 +56,7 @@ From the perspective of multi-thread programming, I have four threads running wh
 
 First, we have *the user application thread*, i.e. the main thread, created by the `node.rs`. Inside this thread, it will bring up *the manager thread* in `manager.rs`, which will provide transport service. The `socket.rs` is only an API and does not do any work. When the user thread calls the socket API, it only sends a task message to the manager. The manager holds a task queue, which is the most important component of it. All it does during execution is to process next task in the queue.
 
-Second, when the manager thread starts, it will also bring up *the timer thread* and *the udp-utils thread*. The manager can tell the timer thread to set up or cancel timeout timer. The timer will put a task into the queue when timeout happens. The udp thread only does two things. It unpack packets and hand them over to mananger thread when new datagrams arrived using UDP. It also packs packets in its queue and send them to remote host using UDP.
+Second, when the manager thread starts, it will also bring up *the timer thread* and *the udp-utils thread*. The manager can tell the timer thread to set up or cancel timeout timer. The timer will put a task into the queue when timeout happens. The udp thread does two things. It unpacks packets and hands them over to mananger thread when new datagrams arrived using UDP. It also packs packets in its queue and send them to remote host using UDP.
 
 ### Disscussions of design
 1. Diss1a: Your transport protocol implementation picks an initial sequence number when establishing a new connection. This might be 1, or it could be a random value. Which is better, and why?
@@ -72,88 +73,88 @@ Second, when the manager thread starts, it will also bring up *the timer thread*
 
 ### Implementation Details
 1. `The socket manager` struct mantains a task queue to hold all the tasks to handle. I reused the inter-thread communication channel/pipe as the queue. Since the message in the channel is also FIFO. Rust enum can hold various types of values, so I use this to hold all the task arguments for socket APIs and other tasks.
-```
-// Task Message from socket api and timer sent to socket manager
-#[derive(Clone)]
-pub enum TaskMsg {
-    // (enum also can hold args)
-    // ==== for socket API
-    /// (local_addr)
-    New(String),
-    /// (sock_id, local_port)
-    Bind(SocketID, u8),
-    /// (sock_id, backlog)
-    Listen(SocketID, u32),
-    Accept(SocketID),
-    /// (sock_id, dest_addr, dest_port)
-    Connect(SocketID, String, u8),
-    /// (sock_id, buf, pos, len)
-    Write(SocketID, Vec<u8>, u32, u32),
-    /// (sock_id, len)
-    Read(SocketID, u32),
-    /// (sock_id)
-    Close(SocketID),
-    Release(SocketID),
+    ```
+    // Task Message from socket api and timer sent to socket manager
+    #[derive(Clone)]
+    pub enum TaskMsg {
+        // (enum also can hold args)
+        // ==== for socket API
+        /// (local_addr)
+        New(String),
+        /// (sock_id, local_port)
+        Bind(SocketID, u8),
+        /// (sock_id, backlog)
+        Listen(SocketID, u32),
+        Accept(SocketID),
+        /// (sock_id, dest_addr, dest_port)
+        Connect(SocketID, String, u8),
+        /// (sock_id, buf, pos, len)
+        Write(SocketID, Vec<u8>, u32, u32),
+        /// (sock_id, len)
+        Read(SocketID, u32),
+        /// (sock_id)
+        Close(SocketID),
+        Release(SocketID),
 
-    // ==== UDP packets related
-    // a new packet is received
-    OnReceive(TransportPacket),
-    /// schedule a sending task
-    /// (sock_id, trans_type, seq_start, len, retrans_flag)
-    SendNow(SocketID,TransType, u32, u32, bool),
-}
-```
+        // ==== UDP packets related
+        // a new packet is received
+        OnReceive(TransportPacket),
+        /// schedule a sending task
+        /// (sock_id, trans_type, seq_start, len, retrans_flag)
+        SendNow(SocketID,TransType, u32, u32, bool),
+    }
+    ```
 
 2. `The socket manager` also matains a hashmap containing pairs of `SocketID` and `SocketContens`. `SocketID` contains a four-element tuple, (local_addr, local_port, remote_addr, remote_port). The `SocketContents` holds all the buffers and sliding windows. As described above, the socket API does not have any info and does not do any work. And all APIs are non-blocking.
 
 3. The sending and recving buffers are implemented suing `VecDeque<u8>`, which is a ring buffer of bytes. Several 32-bit values are used to define the sliding window. For sending window, send_base, send_next, send_wind are used. For recv window, recv_base, recv_next, recv_wind are used.
-```
-// ==== sliding window pos ====
-/// the start of sliding window, the first byte that is not acked
-send_base: u32, 
-/// the start of range to be filled with new data
-send_next: u32,
-/// send window size
-send_wind: u32,
+    ```
+    // ==== sliding window pos ====
+    /// the start of sliding window, the first byte that is not acked
+    send_base: u32, 
+    /// the start of range to be filled with new data
+    send_next: u32,
+    /// send window size
+    send_wind: u32,
 
-/// the start of bytes to be read by user
-recv_base: u32,
-// the start of bytes to be filled
-recv_next: u32,
-/// recv window size
-recv_wind: u32,
-```
+    /// the start of bytes to be read by user
+    recv_base: u32,
+    // the start of bytes to be filled
+    recv_next: u32,
+    /// recv window size
+    recv_wind: u32,
+    ```
 
 4. I use a special timer thread to schedule the retransmission task. The socket manager can send command to the timer thread to set up or tear down a timeout timer. The socket manager will also provide a callback, which is a task for the manager. When the timer is triggered, the timer thread will put the callback into the manager's task queue to perform retransmission.
-```
-type TimeoutCallback = TaskMsg;
-pub enum TimerCmd {
-    New(time::Instant, TimeoutCallback),
-    Cancel(TimerToken),
+    ```
+    type TimeoutCallback = TaskMsg;
+    pub enum TimerCmd {
+        New(time::Instant, TimeoutCallback),
+        Cancel(TimerToken),
 
-}
-struct TimerEntry {
-    time_lim: time::Instant,
-    callback: TimeoutCallback,
-}
-```
+    }
+    struct TimerEntry {
+        time_lim: time::Instant,
+        callback: TimeoutCallback,
+    }
+    ```
 
 5. For each socket, there are seven states.
-```
-pub enum SocketState {
-    CLOSED,
-    LISTEN,
-    SYN_SENT,
-    ESTABLISHED,
-    /// We need to close, but still work to do. 
-    /// When the receiver reveived FIN, but has still data not read by the user.
-    SHUTDOWN,
-    /// wait for all the packets to be acked, so that we can send FIN
-    FIN_WAIT,
-    /// a FIN has been sent
-    FIN_SENT,
-}
-```
+    ```
+    pub enum SocketState {
+        CLOSED,
+        LISTEN,
+        SYN_SENT,
+        ESTABLISHED,
+        /// We need to close, but still work to do. 
+        /// When the receiver reveived FIN, but has still data not read by the user.
+        SHUTDOWN,
+        /// wait for all the packets to be acked, so that we can send FIN
+        FIN_WAIT,
+        /// a FIN has been sent
+        FIN_SENT,
+    }
+    ```
  
 ### Test Outputs
 Here shows the test output of `lcoal_test`. In this test, one client and one server socket are created. They communate over UDP on localhost. Frist, the client sends 100 packets to the server. The sever will read the data right after one packet is sent. Then, the client sends 20 packets to fill the server buffer. And the sever reads 20 packets. This uses the buffer but does not involve flow control. The packt loss rate is 5%
@@ -333,6 +334,8 @@ Your design can be extended in multiple directions to integrate modern features.
             self.cwnd += (w_cubic_rtt - self.cwnd) / self.cwnd; // update window size
         }
         ```
+    
+    To use google BBR v1, we need to find the optimal point with maximal BW and minimal RTT, which will reduce the queue usage. First, we need a startup process to do exponential BW search. Then we need to drain the queue to get a lower RTT. Then we continuously explore max BW, seeking the optimal point.
     
 
 4. Delivery Flexibilities: Some major networks (e.g., Amazon Scalable Reliable Datagram) propose that the network does not enforce in-order delivery. Please describe how you may design a flexible API and protocol so that the transport can provide flexibilities such as delivery order (segments can be delivered to applications not in order) and reliability semantics/flexibilities (e.g., some packets do not need reliability, and one can use FEC to correct errors instead of using retransmissions).
