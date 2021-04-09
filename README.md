@@ -1,5 +1,5 @@
 # CS434/534 Programming Assignment 2: Network Transport
-This document serves as the report for this assignment.
+This document serves as the report for this assignment. You may access https://github.com/Rui-Chun/cs534-assign2 to have a better viewing experience.
 
 **Author:** Ruichun Ma (ruichun.ma@yale.edu)
 
